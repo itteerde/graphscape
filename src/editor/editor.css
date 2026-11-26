@@ -33,6 +33,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
 button.tool { width: 44px; height: 44px; padding: 2px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 11px; line-height: 1.1; }
 button.tool .glyph { font-size: 17px; }
 button.tool[aria-pressed="true"] { background: var(--ed-accent); border-color: var(--ed-accent); color: #fff; }
+hr.ed-sep { width: 36px; margin: 2px 0; border: 0; border-top: 1px solid var(--ed-panel-border); }
 button.danger:hover:not(:disabled) { border-color: #c92a2a; color: #c92a2a; }
 .ed-title { margin: 0 0 8px; font-size: 14px; font-weight: 700; }
 .ed-section { margin: 16px 0 6px; font-size: 12px; font-weight: 700; opacity: 0.75; }

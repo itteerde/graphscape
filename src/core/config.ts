@@ -90,6 +90,8 @@ export interface GraphscapeConfig {
     padding: number;
   };
   selection: { color: string; hoverColor: string; width: number };
+  /** Look and snapping of the transform gizmo. Snapping is active while Ctrl (or Cmd) is held. */
+  gizmo: { size: number; space: 'world' | 'local'; snapTranslate: number; snapRotate: number; snapScale: number };
   groups: { palette: string[]; colors: Record<string, string> };
   rules: StyleRule[];
   camera: {
@@ -121,6 +123,8 @@ export interface GraphscapeConfig {
     multiSelect: boolean;
     hover: boolean;
     tooltip: boolean;
+    /** Click a node to show a transform gizmo (arrows, plane handles, rotation rings, scale handles) at the center of the selection. */
+    gizmo: boolean;
     /** Hold X, Y or Z while dragging nodes to restrict the movement to that axis (Z only in 3D). */
     axisLock: boolean;
     openLinks: 'click' | 'dblclick' | 'ctrl-click' | 'never';
@@ -172,11 +176,12 @@ export const DEFAULT_CONFIG: GraphscapeConfig = {
   weight: { show: 'auto', font, size: 5, color: '#3b4652', background: 'rgba(255,255,255,0.85)', padding: 1, maxCount: 3000, decimals: 2 },
   card: { background: '#ffffff', border: '#2b3a4a', headerBackground: null, headerColor: '#ffffff', textColor: '#1f2933', font, size: 4.5, padding: 2 },
   selection: { color: '#e8590c', hoverColor: '#f59f00', width: 2.5 },
+  gizmo: { size: 0.9, space: 'world', snapTranslate: 10, snapRotate: 15, snapScale: 0.1 },
   groups: { palette: ['#4e79a7', '#f28e2b', '#e15759', '#76b7b2', '#59a14f', '#edc948', '#b07aa1', '#ff9da7', '#9c755f', '#bab0ac'], colors: {} },
   rules: [],
   camera: { fov: 50, zoomMin: 0.02, zoomMax: 60, fitPadding: 1.25, autoFit: true, damping: false, rotation: 'orbit' },
   layout: { name: 'force', idealLength: 60, spacing: 40, gap: 14, weightMode: 'ignore', gravity: 0.05, direction: 'TB', seed: 1, autoRun: true },
-  interaction: { dragNodes: true, select: true, multiSelect: true, hover: true, tooltip: true, axisLock: true, openLinks: 'dblclick', pickLimit: 20000 },
+  interaction: { dragNodes: true, select: true, multiSelect: true, hover: true, tooltip: true, gizmo: false, axisLock: true, openLinks: 'dblclick', pickLimit: 20000 },
   links: { baseUrl: '', target: 'self', allowAbsolute: false, panelSandbox: 'allow-same-origin allow-scripts allow-popups allow-forms' },
   ui: {
     controls: true,

@@ -86,6 +86,19 @@ Labels may contain line breaks (`\n`), and a node can carry a `sublabel` that is
 ### Selection
 `selection.color`, `selection.hoverColor`, `selection.width` (outline width in world units).
 
+### Transform gizmo
+`interaction.gizmo: true` shows, for the selected nodes, a gizmo at the center of the selection (not at the world origin):
+
+| Mode | Handles | Effect |
+| --- | --- | --- |
+| `translate` | X, Y, Z arrows and the XY, YZ, XZ plane handles | moves all selected nodes together |
+| `rotate` | rings around X, Y and Z (2D: only the Z ring) plus an outer view ring | rotates the positions of the selected nodes around the center |
+| `scale` | per-axis handles and a uniform center handle | spreads or compresses the selected nodes around the center |
+
+Rotate and scale need two or more selected nodes, because a single node has no orientation or extent of its own. Free dragging of a node and the X/Y/Z lock keys keep working.
+`view.setGizmoMode('translate' | 'rotate' | 'scale')`, event `gizmomode`. Hold **Ctrl** (or Cmd) while dragging to snap.
+`gizmo.size` (0.9), `gizmo.space` (`world` or `local`), `gizmo.snapTranslate` (10 world units), `gizmo.snapRotate` (15 degrees), `gizmo.snapScale` (0.1).
+
 ### Camera and layout
 | Key | Default | Meaning |
 | --- | --- | --- |
@@ -107,6 +120,7 @@ Labels may contain line breaks (`\n`), and a node can carry a `sublabel` that is
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `interaction.dragNodes` / `select` / `multiSelect` / `hover` / `tooltip` | all `true` | switch features off for a read-only embed |
+| `interaction.gizmo` | `false` | click a node to get a transform gizmo at the center of the selection (see below); the editor turns it on |
 | `interaction.axisLock` | `true` | hold **X**, **Y** or **Z** while dragging nodes to move them along that axis only (a colored guide line shows it); two keys give a plane; Z exists only in 3D |
 | `interaction.openLinks` | `dblclick` | `click`, `dblclick`, `ctrl-click`, `never` |
 | `interaction.pickLimit` | `20000` | edge hit testing is skipped above this edge count |
@@ -137,6 +151,7 @@ view.fit(); view.zoomBy(1.4); view.resize();
 view.toggleFullscreen(force?): Promise<void>; view.isFullscreen;
 view.getSelection(); view.setSelection({ nodes, edges }); view.selectAll(); view.clearSelection();
 view.setTool('select' | 'connect');
+view.setGizmoMode('translate' | 'rotate' | 'scale'); view.getGizmoMode();
 view.openLink('node' | 'edge', id); view.closePanel();
 view.getNodeStyle(id); view.getEdgeStyle(id);
 view.exportImage('image/png'); view.destroy();
@@ -144,7 +159,7 @@ view.graph   // the Graph model: addNode, updateNode, removeNode, addEdge, updat
 ```
 
 Events (`view.on(name, fn)` returns an unsubscribe function):
-`nodeclick nodedblclick edgeclick backgroundclick backgrounddblclick selection hover nodedragstart nodedragend connect link layoutstart layoutend dimensionchange fullscreenchange`.
+`nodeclick nodedblclick edgeclick backgroundclick backgrounddblclick selection hover nodedragstart nodedragend connect link layoutstart layoutend dimensionchange fullscreenchange gizmomode`. `nodedragstart`/`nodedragend` are also fired by the gizmo.
 `link` fires before a link opens; set `event.handled = true` to open it yourself.
 
 Pure functions usable without a view (also in Node): `parseGraph`, `serializeGraph`, `detectFormat`, `computeLayout`, `generateClustered`, `resolveUrl`.

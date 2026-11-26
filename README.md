@@ -99,6 +99,7 @@ With `target: "event"` (or `event.handled = true` in a `link` listener) you deci
 | Select | click; Shift-click toggles; Shift-drag on the background draws a selection box; Ctrl+A |
 | Add node | double-click the background, or tool **Node** (N) and click |
 | Add edge | tool **Edge** (E), drag from node to node; release on the same node for a self loop; or select two nodes and press **Connect** |
+| Gizmo | select nodes and use the arrows, rings and scale handles at the selection center; **M** move, **R** rotate, **S** scale (rotate/scale need 2+ nodes), Ctrl snaps |
 | Edit | inspector on the right: label (multi-line), subline, group, URL, color, shape, size, pinned, card body; for edges weight, label, URL, color, direction, dashed, width |
 | Delete | Del / Backspace |
 | Undo / redo | Ctrl+Z / Ctrl+Y |

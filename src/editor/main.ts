@@ -70,7 +70,7 @@ const graph = new Graph();
 const history = new History();
 const baseConfig: DeepPartial<GraphscapeConfig> = {
   theme: savedTheme(),
-  interaction: { openLinks: 'ctrl-click' },
+  interaction: { openLinks: 'ctrl-click', gizmo: true },
   links: { target: 'blank', allowAbsolute: true },
 };
 const view = new GraphView($('stage'), baseConfig, graph);
@@ -140,7 +140,7 @@ function setTool(t: EditorTool): void {
 }
 
 const TOOL_HINT: Record<EditorTool, string> = {
-  select: 'Drag nodes to move them (hold X, Y or Z to lock an axis). Shift-click or Shift-drag selects several. Ctrl-click opens a link.',
+  select: 'Drag nodes freely, or use the gizmo of the selection: M move, R rotate, S scale (Ctrl snaps). Hold X, Y or Z while dragging to lock an axis. Shift selects several.',
   add: 'Click on the canvas to add a node.',
   connect: 'Drag from one node to another to add an edge. Release on the same node for a self loop.',
 };
@@ -200,7 +200,15 @@ const toolBtns = [
   toolButton('connect', '\u2197', 'Edge', 'Connect nodes (E)'),
 ];
 toolBtns.forEach((b, i) => (b.dataset.tool = (['select', 'add', 'connect'] as const)[i]));
-$('tools').append(...toolBtns, h('button', { class: 'tool danger', title: 'Delete selection (Del)', onclick: deleteSelection }, h('span', { class: 'glyph', textContent: '\u2715' }), 'Delete'));
+const gizmoBtns = (['translate', 'rotate', 'scale'] as const).map((m) => {
+  const glyph = { translate: '\u2725', rotate: '\u21bb', scale: '\u2922' }[m];
+  const label = { translate: 'Move', rotate: 'Rotate', scale: 'Scale' }[m];
+  const key = { translate: 'M', rotate: 'R', scale: 'S' }[m];
+  const b = h('button', { class: 'tool', title: `${label} gizmo (${key}); Ctrl snaps. Rotate and scale need two or more selected nodes.`, 'aria-pressed': m === 'translate', onclick: () => view.setGizmoMode(m) }, h('span', { class: 'glyph', textContent: glyph }), label);
+  b.dataset.gizmo = m;
+  return b;
+});
+$('tools').append(...toolBtns, h('hr', { class: 'ed-sep' }), ...gizmoBtns, h('button', { class: 'tool danger', title: 'Delete selection (Del)', onclick: deleteSelection }, h('span', { class: 'glyph', textContent: '\u2715' }), 'Delete'));
 
 function refreshChrome(): void {
   const vars = view.getConfig().ui.cssVars;
@@ -441,6 +449,7 @@ $<HTMLInputElement>('cfgfile').addEventListener('change', async (e) => {
 // ------------------------------------------------------------------ wiring
 
 view.on('selection', renderInspector);
+view.on('gizmomode', ({ mode }) => { for (const b of gizmoBtns) b.setAttribute('aria-pressed', String(b.dataset.gizmo === mode)); });
 view.on('backgroundclick', ({ position }) => { if (tool === 'add') addNodeAt(position); });
 view.on('backgrounddblclick', ({ position }) => addNodeAt(position));
 view.on('connect', ({ source, target }) => connect(source, target));
@@ -464,6 +473,9 @@ window.addEventListener('keydown', (e) => {
   else if (mod && key === 'a') { e.preventDefault(); view.selectAll(); }
   else if (!mod && (key === 'delete' || key === 'backspace')) { e.preventDefault(); deleteSelection(); }
   else if (!mod && key === 'v') setTool('select');
+  else if (!mod && key === 'm') view.setGizmoMode('translate');
+  else if (!mod && key === 'r') view.setGizmoMode('rotate');
+  else if (!mod && key === 's') view.setGizmoMode('scale');
   else if (!mod && key === 'n') setTool('add');
   else if (!mod && key === 'e') setTool('connect');
   else if (!mod && key === 'f') view.fit();

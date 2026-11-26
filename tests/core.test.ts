@@ -247,6 +247,8 @@ describe('configuration and styling', () => {
     expect(c.node.size).toBe(30);
     expect(c.node.shape).toBe('circle');
     expect(mergeConfig({ a: { b: 1, c: 2 } }, { a: { b: 5 } })).toEqual({ a: { b: 5, c: 2 } });
+    expect(createConfig().interaction.gizmo).toBe(false);
+    expect(createConfig({ interaction: { gizmo: true }, gizmo: { snapRotate: 5 } }).gizmo).toEqual({ size: 0.9, space: 'world', snapTranslate: 10, snapRotate: 5, snapScale: 0.1 });
   });
 
   it('resolves styles: palette < rules < element values', () => {

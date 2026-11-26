@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
@@ -26,6 +27,7 @@ interface CamControls {
 }
 
 export type Tool = 'select' | 'connect';
+export type GizmoMode = 'translate' | 'rotate' | 'scale';
 export interface Selection {
   nodes: string[];
   edges: string[];
@@ -50,6 +52,7 @@ export interface ViewEvents {
   layoutend: { name: LayoutName; completed: boolean };
   dimensionchange: { dimension: Dimension };
   fullscreenchange: { fullscreen: boolean };
+  gizmomode: { mode: GizmoMode };
 }
 
 interface Layer {
@@ -181,6 +184,15 @@ export class GraphView {
   private controlsEl: HTMLDivElement | null = null;
   private dimButton: HTMLButtonElement | null = null;
   private fsButton: HTMLButtonElement | null = null;
+
+  // transform gizmo: TransformControls attached to an invisible pivot at the center of the selection
+  private tc: TransformControls | null = null;
+  private tcHelper: THREE.Object3D | null = null;
+  private pivot = new THREE.Object3D();
+  private gizmoMode: GizmoMode = 'translate';
+  private gizmoDragging = false;
+  private gizmoStart: { pivot: THREE.Vector3; nodes: Map<string, Vec3> } | null = null;
+  private snapHeld = false;
   private panelEl: HTMLDivElement | null = null;
 
   private tmpM = new THREE.Matrix4();
@@ -211,7 +223,7 @@ export class GraphView {
     this.persp = new THREE.PerspectiveCamera(this.config.camera.fov, 1, 1, 100000);
     this.ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10000);
     this.camera = this.config.dimension === '3d' ? this.persp : this.ortho;
-    this.scene.add(this.ambient, this.headlight, this.headlight.target);
+    this.scene.add(this.ambient, this.headlight, this.headlight.target, this.pivot);
 
     this.tooltipEl = document.createElement('div');
     this.tooltipEl.className = 'gs-tooltip gs-ui';
@@ -299,6 +311,7 @@ export class GraphView {
     if (this.orbit) this.orbit.enableDamping = this.config.camera.damping;
     this.applyControlLimits();
     this.applyAppearance();
+    this.setupGizmo();
     this.dirtyStructure = true;
     this.requestRender();
     if (dimension !== undefined) this.setDimension(dimension);
@@ -452,6 +465,7 @@ export class GraphView {
   setTool(tool: Tool): void {
     this.tool = tool;
     this.canvas.style.cursor = tool === 'connect' ? 'crosshair' : '';
+    this.syncGizmo();
   }
 
   getTool(): Tool {
@@ -602,6 +616,7 @@ export class GraphView {
     document.removeEventListener('fullscreenchange', this.onFullscreenChange);
     this.container.classList.remove('gs-pseudo-fullscreen');
     this.setAxisGuide(null);
+    this.disposeGizmo();
     this.disposeControls();
     this.clearScene();
     for (const g of this.geoms.values()) g.dispose();
@@ -689,6 +704,7 @@ export class GraphView {
     if (preserve && target) this.controls.target.copy(target);
     this.applyControlLimits();
     this.controls.update();
+    this.setupGizmo();
   }
 
   private applyControlLimits(): void {
@@ -1091,6 +1107,7 @@ export class GraphView {
       l.outline.instanceMatrix.needsUpdate = true;
       if (l.outline.instanceColor) l.outline.instanceColor.needsUpdate = true;
     }
+    this.syncGizmo();
   }
 
   private computePaths(): void {
@@ -1222,6 +1239,188 @@ export class GraphView {
     return this.height / (2 * Math.tan(THREE.MathUtils.degToRad(this.persp.fov) / 2) * d);
   }
 
+  // ------------------------------------------------------------------ transform gizmo
+
+  getGizmoMode(): GizmoMode {
+    return this.gizmoMode;
+  }
+
+  /**
+   * Move, rotate or scale. With one selected node only `translate` does something; rotating and scaling act on
+   * the positions of two or more selected nodes around the center of the selection.
+   */
+  setGizmoMode(mode: GizmoMode): void {
+    this.gizmoMode = mode;
+    this.tc?.setMode(mode);
+    this.applyGizmoAxes();
+    this.syncGizmo();
+    this.events.emit('gizmomode', { mode });
+    this.requestRender();
+  }
+
+  private disposeGizmo(): void {
+    if (!this.tc) return;
+    this.tc.detach();
+    if (this.tcHelper) this.scene.remove(this.tcHelper);
+    this.tc.dispose();
+    this.tc = null;
+    this.tcHelper = null;
+    this.gizmoDragging = false;
+  }
+
+  /** (Re)creates the gizmo for the current camera. Called whenever the camera or the configuration changes. */
+  private setupGizmo(): void {
+    this.disposeGizmo();
+    if (!this.config.interaction.gizmo) return;
+    const tc = new TransformControls(this.camera, this.canvas);
+    tc.setMode(this.gizmoMode);
+    tc.setSpace(this.config.gizmo.space);
+    tc.setSize(this.config.gizmo.size);
+    tc.addEventListener('dragging-changed', ((e: { value: boolean }) => {
+      this.controls.enabled = !e.value;
+      if (e.value) this.beginGizmoDrag();
+      else this.endGizmoDrag();
+    }) as never);
+    tc.addEventListener('objectChange', (() => this.applyGizmoDrag()) as never);
+    tc.addEventListener('change', (() => this.requestRender()) as never);
+    // r169+ returns a helper object that has to be added to the scene; older versions are the object itself
+    const helper = (typeof (tc as unknown as { getHelper?: () => THREE.Object3D }).getHelper === 'function'
+      ? (tc as unknown as { getHelper: () => THREE.Object3D }).getHelper()
+      : (tc as unknown as THREE.Object3D));
+    this.scene.add(helper);
+    this.tc = tc;
+    this.tcHelper = helper;
+    this.applyGizmoAxes();
+    this.applySnap();
+    this.syncGizmo();
+  }
+
+  /** 2D: arrows and planes for X/Y, and only the Z ring for rotation. 3D: everything. */
+  private applyGizmoAxes(): void {
+    const tc = this.tc;
+    if (!tc) return;
+    if (this.config.dimension === '3d') {
+      tc.showX = tc.showY = tc.showZ = true;
+    } else if (this.gizmoMode === 'rotate') {
+      tc.showX = false;
+      tc.showY = false;
+      tc.showZ = true;
+    } else {
+      tc.showX = true;
+      tc.showY = true;
+      tc.showZ = false;
+    }
+  }
+
+  private setSnap(held: boolean): void {
+    if (held === this.snapHeld) return;
+    this.snapHeld = held;
+    this.applySnap();
+  }
+
+  private applySnap(): void {
+    const tc = this.tc;
+    if (!tc) return;
+    const g = this.config.gizmo;
+    tc.setTranslationSnap(this.snapHeld ? g.snapTranslate : null);
+    tc.setRotationSnap(this.snapHeld ? THREE.MathUtils.degToRad(g.snapRotate) : null);
+    tc.setScaleSnap(this.snapHeld ? g.snapScale : null);
+  }
+
+  /** Is the pointer over a gizmo handle? (TransformControls only updates its hover state on pointer moves.) */
+  private gizmoHovered(e: PointerEvent): boolean {
+    const tc = this.tc;
+    if (!tc || !tc.object) return false;
+    const r = this.canvas.getBoundingClientRect();
+    try {
+      (tc as unknown as { pointerHover: (p: { x: number; y: number; button: number }) => void }).pointerHover({
+        x: ((e.clientX - r.left) / r.width) * 2 - 1,
+        y: (-(e.clientY - r.top) / r.height) * 2 + 1,
+        button: e.button,
+      });
+    } catch {
+      /* hover state from the last pointer move is used */
+    }
+    return !!tc.axis;
+  }
+
+  /** Attaches the gizmo to the selection (or detaches it) and keeps the pivot at the selection center. */
+  private syncGizmo(): void {
+    const tc = this.tc;
+    if (!tc) return;
+    const ids = [...this.selNodes].filter((id) => this.nodeInfo.has(id));
+    const eligible = this.tool === 'select' && ids.length > 0 && (this.gizmoMode === 'translate' || ids.length >= 2);
+    if (!eligible) {
+      if (tc.object) tc.detach();
+      return;
+    }
+    if (!this.gizmoDragging) {
+      let x = 0, y = 0, z = 0;
+      for (const id of ids) {
+        const p = this.nodeInfo.get(id)!.body.pos;
+        x += p[0];
+        y += p[1];
+        z += p[2];
+      }
+      this.pivot.position.set(x / ids.length, y / ids.length, z / ids.length);
+      this.pivot.quaternion.identity();
+      this.pivot.scale.set(1, 1, 1);
+      this.pivot.updateMatrixWorld(true);
+    }
+    if (tc.object !== this.pivot) tc.attach(this.pivot);
+  }
+
+  private beginGizmoDrag(): void {
+    const ids = [...this.selNodes].filter((id) => this.nodeInfo.has(id));
+    const nodes = new Map<string, Vec3>();
+    for (const id of ids) {
+      const p = this.nodeInfo.get(id)!.body.pos;
+      nodes.set(id, [p[0], p[1], p[2]]);
+    }
+    this.gizmoStart = { pivot: this.pivot.position.clone(), nodes };
+    this.gizmoDragging = true;
+    this.dragIds = ids;
+    this.events.emit('nodedragstart', { ids });
+  }
+
+  private applyGizmoDrag(): void {
+    const start = this.gizmoStart;
+    const tc = this.tc;
+    if (!start || !tc || !this.gizmoDragging) return;
+    const dim3 = this.config.dimension === '3d';
+    const P0 = start.pivot;
+    const mode = tc.mode;
+    const d = this.pivot.position;
+    const entries: [string, Vec3][] = [];
+    const rel = new THREE.Vector3();
+    for (const [id, s] of start.nodes) {
+      const n = this._graph.getNode(id);
+      if (!n) continue;
+      let p: Vec3;
+      if (mode === 'translate') {
+        p = [s[0] + d.x - P0.x, s[1] + d.y - P0.y, s[2] + d.z - P0.z];
+      } else {
+        rel.set(s[0] - P0.x, s[1] - P0.y, s[2] - P0.z);
+        if (mode === 'rotate') rel.applyQuaternion(this.pivot.quaternion);
+        else rel.multiply(this.pivot.scale);
+        p = [P0.x + rel.x, P0.y + rel.y, P0.z + rel.z];
+      }
+      entries.push([id, [p[0], p[1], dim3 ? p[2] : n.z ?? 0]]);
+    }
+    this._graph.setPositions(entries);
+  }
+
+  private endGizmoDrag(): void {
+    const ids = this.dragIds;
+    this.gizmoDragging = false;
+    this.gizmoStart = null;
+    this.dragIds = [];
+    for (const id of ids) this.sim?.unpin(id, !!this._graph.getNode(id)?.pinned);
+    this.syncGizmo();
+    this.events.emit('nodedragend', { ids });
+    this.requestRender();
+  }
+
   // ------------------------------------------------------------------ picking
 
   private ndc = new THREE.Vector2();
@@ -1301,6 +1500,7 @@ export class GraphView {
     if ((e.target as Element).closest?.('.gs-ui')) return;
     this.pointerIsDown = true;
     this.requestRender();
+    if (this.gizmoHovered(e)) return; // the gizmo handles this press itself
     if (e.button !== 0) return;
     const p = this.eventPoint(e);
     this.lastPointer = p;
@@ -1358,7 +1558,7 @@ export class GraphView {
     if (down && !down.moved && Math.hypot(p.x - down.x, p.y - down.y) > DRAG_THRESHOLD) down.moved = true;
     const d = this.drag;
     if (!d) {
-      if (!down) this.scheduleHover();
+      if (!down && !(this.tc?.object && this.tc.axis)) this.scheduleHover();
       this.moveTooltip(p);
       return;
     }
@@ -1583,6 +1783,7 @@ export class GraphView {
   }
 
   private onKeyDown = (e: KeyboardEvent): void => {
+    this.setSnap(e.ctrlKey || e.metaKey);
     if (e.key === 'Escape' && this.container.classList.contains('gs-pseudo-fullscreen')) void this.toggleFullscreen(false);
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const t = e.target as HTMLElement | null;
@@ -1595,6 +1796,7 @@ export class GraphView {
   };
 
   private onKeyUp = (e: KeyboardEvent): void => {
+    this.setSnap(e.ctrlKey || e.metaKey);
     const k = e.key.toLowerCase();
     if ((k === 'x' || k === 'y' || k === 'z') && this.axisKeys.delete(k)) this.refreshAxisDrag();
   };
