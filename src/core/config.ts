@@ -1,7 +1,7 @@
 import type { EdgeData, NodeData, NodeShape, PropValue } from './types';
 import type { Dimension } from './types';
 
-export type LayoutName = 'force' | 'circle' | 'grid' | 'sphere' | 'layered' | 'random';
+export type LayoutName = 'force' | 'tree' | 'layered' | 'circle' | 'grid' | 'sphere' | 'random';
 
 /** Visual properties of a node after all rules were applied. */
 export interface NodeStyle {
@@ -56,6 +56,9 @@ export interface GraphscapeConfig {
     color: string;
     background: string | null;
     padding: number;
+    /** Size and color of `sublabel` (second line). */
+    subSize: number;
+    subColor: string;
     /** Labels are hidden above this node count (the tooltip still works). */
     maxCount: number;
     maxChars: number;
@@ -103,6 +106,8 @@ export interface GraphscapeConfig {
     name: LayoutName;
     idealLength: number;
     spacing: number;
+    /** Free space kept between node boxes (node plus label) by tree, layered, circle, grid and sphere layouts. */
+    gap: number;
     weightMode: 'ignore' | 'strength';
     gravity: number;
     direction: 'TB' | 'LR';
@@ -130,6 +135,8 @@ export interface GraphscapeConfig {
   };
   ui: {
     controls: boolean;
+    /** Adds a full screen button to the controls. */
+    fullscreen: boolean;
     injectStyles: boolean;
     /** CSS custom properties set on the view root, without the `--gs-` prefix. */
     cssVars: Record<string, string>;
@@ -161,18 +168,19 @@ export const DEFAULT_CONFIG: GraphscapeConfig = {
     gapSize: 3,
     widthByWeight: { enabled: false, min: 1, max: 6 },
   },
-  label: { show: true, font, size: 6, color: '#1f2933', background: null, padding: 1, maxCount: 1500, maxChars: 40, mode: 'world', resolution: 4, gap: 1.5 },
+  label: { show: true, font, size: 6, color: '#1f2933', subSize: 4.6, subColor: '#5f6b76', background: null, padding: 1, maxCount: 1500, maxChars: 40, mode: 'world', resolution: 4, gap: 1.5 },
   weight: { show: 'auto', font, size: 5, color: '#3b4652', background: 'rgba(255,255,255,0.85)', padding: 1, maxCount: 3000, decimals: 2 },
   card: { background: '#ffffff', border: '#2b3a4a', headerBackground: null, headerColor: '#ffffff', textColor: '#1f2933', font, size: 4.5, padding: 2 },
   selection: { color: '#e8590c', hoverColor: '#f59f00', width: 2.5 },
   groups: { palette: ['#4e79a7', '#f28e2b', '#e15759', '#76b7b2', '#59a14f', '#edc948', '#b07aa1', '#ff9da7', '#9c755f', '#bab0ac'], colors: {} },
   rules: [],
   camera: { fov: 50, zoomMin: 0.02, zoomMax: 60, fitPadding: 1.25, autoFit: true, damping: false, rotation: 'orbit' },
-  layout: { name: 'force', idealLength: 60, spacing: 40, weightMode: 'ignore', gravity: 0.05, direction: 'TB', seed: 1, autoRun: true },
+  layout: { name: 'force', idealLength: 60, spacing: 40, gap: 14, weightMode: 'ignore', gravity: 0.05, direction: 'TB', seed: 1, autoRun: true },
   interaction: { dragNodes: true, select: true, multiSelect: true, hover: true, tooltip: true, axisLock: true, openLinks: 'dblclick', pickLimit: 20000 },
   links: { baseUrl: '', target: 'self', allowAbsolute: false, panelSandbox: 'allow-same-origin allow-scripts allow-popups allow-forms' },
   ui: {
     controls: true,
+    fullscreen: false,
     injectStyles: true,
     cssVars: {
       font,
@@ -193,7 +201,7 @@ export const themes: Record<string, DeepPartial<GraphscapeConfig>> = {
     background: { color: '#14181d', gradientTo: null },
     node: { color: '#6aa6d9', borderColor: '#0b0e11', labelColor: '#e6ebf0' },
     edge: { color: '#7d8996' },
-    label: { color: '#e6ebf0' },
+    label: { color: '#e6ebf0', subColor: '#a9b4bf' },
     weight: { color: '#d3dae1', background: 'rgba(20,24,29,0.85)' },
     card: { background: '#1d242c', border: '#6b7886', textColor: '#e6ebf0' },
     selection: { color: '#ffa94d', hoverColor: '#ffd43b' },
@@ -204,7 +212,7 @@ export const themes: Record<string, DeepPartial<GraphscapeConfig>> = {
     background: { color: '#0d3b66', gradientTo: '#0a2c4d' },
     node: { color: '#faf0ca', borderColor: '#f4d35e', labelColor: '#faf0ca' },
     edge: { color: '#a9c7e8' },
-    label: { color: '#faf0ca' },
+    label: { color: '#faf0ca', subColor: '#a9c7e8' },
     weight: { color: '#0d3b66', background: 'rgba(250,240,202,0.92)' },
     card: { background: '#0a2c4d', border: '#f4d35e', headerBackground: '#f4d35e', headerColor: '#0d3b66', textColor: '#faf0ca' },
     selection: { color: '#ee964b', hoverColor: '#f95738' },

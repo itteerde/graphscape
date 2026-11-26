@@ -17,6 +17,12 @@ export interface TextStyle {
   maxChars: number;
 }
 
+export interface SubText {
+  text: string;
+  size: number;
+  color: string;
+}
+
 const MAX_TEXTURE = 4096;
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
@@ -43,33 +49,48 @@ export class TextureCache {
     return t;
   }
 
-  text(text: string, s: TextStyle): TextImage {
-    const key = JSON.stringify(['t', text, s, this.resolution]);
+  /**
+   * Label texture. `text` may contain line breaks; `sub` adds a smaller second block below
+   * (its own size and color) that is also allowed to contain line breaks.
+   */
+  text(text: string, s: TextStyle, sub?: SubText): TextImage {
+    const key = JSON.stringify(['t', text, s, sub ?? null, this.resolution]);
     const hit = this.map.get(key);
     if (hit) return hit;
     const res = this.resolution;
-    const px = s.size * res;
-    const lineH = px * 1.25;
+    const trunc = (l: string): string => (l.length > s.maxChars ? l.slice(0, Math.max(1, s.maxChars - 1)) + '\u2026' : l);
+    const rows = [
+      ...text.split('\n').map((t) => ({ t: trunc(t), px: s.size * res, color: s.color })),
+      ...(sub?.text ? sub.text.split('\n').map((t) => ({ t: trunc(t), px: sub.size * res, color: sub.color })) : []),
+    ];
     const pad = s.padding * res;
-    const lines = text.split('\n').map((l) => (l.length > s.maxChars ? l.slice(0, Math.max(1, s.maxChars - 1)) + '…' : l));
-    const font = `${px}px ${s.font}`;
     const c = document.createElement('canvas');
     let ctx = c.getContext('2d')!;
-    ctx.font = font;
-    const width = Math.max(...lines.map((l) => ctx.measureText(l).width));
+    let width = 0;
+    let height = 0;
+    for (const r of rows) {
+      ctx.font = `${r.px}px ${s.font}`;
+      width = Math.max(width, ctx.measureText(r.t).width);
+      height += r.px * 1.25;
+    }
     c.width = Math.min(MAX_TEXTURE, Math.max(2, Math.ceil(width + pad * 2)));
-    c.height = Math.min(MAX_TEXTURE, Math.max(2, Math.ceil(lines.length * lineH + pad * 2)));
+    c.height = Math.min(MAX_TEXTURE, Math.max(2, Math.ceil(height + pad * 2)));
     ctx = c.getContext('2d')!;
-    ctx.font = font;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     if (s.background) {
       ctx.fillStyle = s.background;
-      roundRect(ctx, 0, 0, c.width, c.height, px * 0.25);
+      roundRect(ctx, 0, 0, c.width, c.height, s.size * res * 0.25);
       ctx.fill();
     }
-    ctx.fillStyle = s.color;
-    lines.forEach((l, i) => ctx.fillText(l, c.width / 2, pad + lineH * (i + 0.5)));
+    let y = pad;
+    for (const r of rows) {
+      const lh = r.px * 1.25;
+      ctx.font = `${r.px}px ${s.font}`;
+      ctx.fillStyle = r.color;
+      ctx.fillText(r.t, c.width / 2, y + lh / 2);
+      y += lh;
+    }
     const img: TextImage = { texture: this.make(c), w: c.width / res, h: c.height / res };
     this.map.set(key, img);
     return img;

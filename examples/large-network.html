@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Graphscape: 1200 node network, full screen</title>
+  <style>
+    body { font: 15px/1.5 system-ui, sans-serif; margin: 0 auto; max-width: 1100px; padding: 16px; }
+    #graph { height: 70vh; min-height: 420px; border: 1px solid #3a4652; margin: 12px 0; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    button, select { height: 32px; padding: 0 10px; font: inherit; cursor: pointer; }
+    .legend span { display: inline-flex; align-items: center; gap: 5px; margin-right: 14px; }
+    .legend i { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+    #stats { margin: 6px 0; }
+  </style>
+</head>
+<body>
+  <h1>1200 nodes, very different connectivity</h1>
+  <p>Dense cliques, a scale-free part with hubs, chains (some closing into rings), pendant leaves, isolated nodes,
+     bridges, parallel edges and self loops. Use the layout selector, 2D/3D and full screen (<kbd>F</kbd>, <kbd>Esc</kbd> to leave).</p>
+  <div class="row">
+    <label>Layout <select id="layout"></select></label>
+    <button id="run" type="button">Run layout</button>
+    <button id="full" type="button">Full screen</button>
+    <span id="busy"></span>
+  </div>
+  <div id="stats"></div>
+  <div class="legend" id="legend"></div>
+  <div id="graph"></div>
+
+  <script src="../dist/standalone/graphscape.standalone.js"></script>
+  <script>
+    const { GraphView, Graph, generateMixedNetwork } = Graphscape;
+    const data = generateMixedNetwork({ nodes: 1200, seed: 7 });
+    const graph = new Graph(data);
+
+    const view = new GraphView(document.getElementById('graph'), {
+      theme: 'dark',
+      node: { size: 7, borderWidth: 0.6 },
+      edge: { width: 1, opacity: 0.5, arrows: false, curveSpacing: 9 },
+      label: { show: false },                       // 1200 labels would only add clutter; tooltips show the details
+      weight: { show: 'never' },
+      layout: { idealLength: 30, gravity: 0.03, gap: 6, spacing: 22 },
+      ui: { fullscreen: true },
+    }, graph);
+
+    // ---- statistics
+    const degree = new Map(graph.nodes.map((n) => [n.id, 0]));
+    for (const e of graph.edges) { degree.set(e.source, degree.get(e.source) + 1); degree.set(e.target, degree.get(e.target) + 1); }
+    const values = [...degree.values()];
+    document.getElementById('stats').textContent =
+      `${graph.nodes.length} nodes, ${graph.edges.length} edges, max degree ${Math.max(...values)}, ` +
+      `${values.filter((d) => d === 0).length} isolated, ${values.filter((d) => d === 1).length} leaves`;
+
+    // ---- legend (colors come from the view, so a skin change is reflected)
+    function legend() {
+      const el = document.getElementById('legend');
+      el.replaceChildren();
+      const seen = new Set();
+      for (const n of graph.nodes) {
+        if (seen.has(n.group)) continue;
+        seen.add(n.group);
+        const span = document.createElement('span');
+        const dot = document.createElement('i');
+        dot.style.background = view.getNodeStyle(n.id)?.color ?? '#888';
+        span.append(dot, n.group);
+        el.append(span);
+      }
+    }
+    view.on('layoutend', legend);
+
+    // ---- controls
+    const select = document.getElementById('layout');
+    for (const name of ['force', 'tree', 'layered', 'circle', 'grid', 'sphere', 'random']) select.add(new Option(name, name));
+    const busy = document.getElementById('busy');
+    const run = () => {
+      busy.textContent = 'layout running...';
+      const t0 = performance.now();
+      view.runLayout(select.value).then(() => { busy.textContent = `done in ${Math.round(performance.now() - t0)} ms`; });
+    };
+    document.getElementById('run').addEventListener('click', run);
+    select.addEventListener('change', run);
+    document.getElementById('full').addEventListener('click', () => view.toggleFullscreen());
+    document.addEventListener('keydown', (e) => {
+      if (e.key.toLowerCase() === 'f' && !e.ctrlKey && !e.metaKey && !e.altKey && !/input|textarea|select/i.test(e.target.tagName)) view.toggleFullscreen();
+    });
+    view.on('dimensionchange', ({ dimension }) => { if (dimension === '3d' && view.isFlat()) run(); });
+    view.on('layoutstart', () => { busy.textContent = 'layout running...'; });
+    view.on('layoutend', ({ completed }) => { if (completed) busy.textContent = 'layout finished'; });
+  </script>
+</body>
+</html>

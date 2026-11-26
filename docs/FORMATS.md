@@ -27,6 +27,7 @@ Both live in `src/core/io` and run in Node and in the browser.
 
 * Every edge is weighted: a missing `weight` means 1, and weight 1 is never displayed in `weight.show: "auto"`.
 * `directed` on the graph is the default; an edge may override it. Multiple edges between the same nodes and self loops are allowed.
+* `label` may contain line breaks and `sublabel` adds a smaller second line (kept in JSON, GraphML, GML and DOT).
 * Node `shape`: `circle square rectangle diamond hexagon triangle card`. A `card` shows `label` as title and `body` lines below (`---` is a separator), which is how UML classes are drawn.
 * Coordinates are optional. Nodes without them get a start position and the configured layout runs when the graph is loaded.
 

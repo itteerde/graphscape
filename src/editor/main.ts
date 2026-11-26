@@ -295,6 +295,10 @@ function text(label: string, value: string | undefined, onChange: (v: string | u
   const input = h('input', { type: 'text', value: value ?? '', placeholder, onchange: () => onChange(input.value === '' ? undefined : input.value) });
   return field(label, input);
 }
+function area(label: string, value: string | undefined, onChange: (v: string | undefined) => void, placeholder = '', rows = 2): HTMLElement {
+  const ta = h('textarea', { value: value ?? '', placeholder, rows, onchange: () => onChange(ta.value === '' ? undefined : ta.value) });
+  return field(label, ta);
+}
 function num(label: string, value: number | undefined, onChange: (v: number | undefined) => void, placeholder = ''): HTMLElement {
   const input = h('input', { type: 'number', value: value === undefined ? '' : String(value), placeholder, step: 'any', onchange: () => onChange(input.value === '' || !Number.isFinite(Number(input.value)) ? undefined : Number(input.value)) });
   return field(label, input);
@@ -325,7 +329,13 @@ function renderNodes(ids: string[]): void {
   };
   const el = $('inspector');
   el.replaceChildren(h('h2', { class: 'ed-title', textContent: one ? `Node ${one.id}` : `${nodes.length} nodes` }));
-  if (one) el.append(text('Label', one.label, (v) => apply({ label: v }), one.id));
+  if (one) {
+    el.append(
+      area('Label', one.label, (v) => apply({ label: v }), one.id),
+      area('Subline', one.sublabel, (v) => apply({ sublabel: v }), 'second, smaller line'),
+      h('p', { class: 'ed-hint', textContent: 'Press Enter for a line break inside the label.' }),
+    );
+  }
   el.append(
     text('Group', same(nodes.map((n) => n.group)), (v) => apply({ group: v }), nodes.length > 1 ? 'mixed' : ''),
     text('URL', same(nodes.map((n) => n.url)), (v) => apply({ url: v }), 'relative path, e.g. pages/a.html'),
@@ -335,7 +345,7 @@ function renderNodes(ids: string[]): void {
     check('Pinned', nodes.every((n) => n.pinned), (v) => apply({ pinned: v || undefined })),
   );
   if (one && one.shape === 'card') {
-    const ta = h('textarea', { value: (one.body ?? []).join('\n'), onchange: () => apply({ body: ta.value === '' ? undefined : ta.value.split('\n') }) });
+    const ta = h('textarea', { rows: 6, value: (one.body ?? []).join('\n'), onchange: () => apply({ body: ta.value === '' ? undefined : ta.value.split('\n') }) });
     el.append(field('Body', ta), h('p', { class: 'ed-hint', textContent: 'One line per row. A row with --- draws a separator.' }));
   }
   if (one) el.append(h('p', { class: 'ed-muted', textContent: `${graph.degree(one.id)} edge ends, position ${Math.round(one.x ?? 0)}, ${Math.round(one.y ?? 0)}` }));

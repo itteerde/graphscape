@@ -14,8 +14,8 @@ export function isEllipseShape(shape: NodeShape): boolean {
 }
 
 export function nodeExtents(shape: NodeShape, size: number, aspect: number, dim3: boolean): { hw: number; hh: number } {
+  void dim3; // 3D uses real solids with the same footprint as the 2D shapes
   const hh = size / 2;
-  if (dim3) return { hw: hh, hh };
   return { hw: shape === 'rectangle' ? hh * aspect : hh, hh };
 }
 

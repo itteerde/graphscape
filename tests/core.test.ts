@@ -1,7 +1,7 @@
 import classesGraphml from '../public/samples/classes.graphml?raw';
 import { describe, expect, it } from 'vitest';
 import {
-  Graph, computeLayout, createConfig, detectFormat, generateClustered, geometry, mergeConfig, parseGraph, resolveEdgeStyle,
+  Graph, computeLayout, generateMixedNetwork, createConfig, detectFormat, generateClustered, geometry, mergeConfig, parseGraph, resolveEdgeStyle,
   resolveNodeStyle, buildGroupIndex, resolveUrl, serializeGraph, ForceSimulation,
   type GraphData, type GraphFormat,
 } from '../src/core/index';
@@ -10,7 +10,7 @@ const sample = (): GraphData => ({
   directed: true,
   meta: { title: 'Test' },
   nodes: [
-    { id: 'a', label: 'Alpha', x: 10, y: 20, group: 'g1', url: 'pages/a.html', color: '#112233', shape: 'diamond', size: 20 },
+    { id: 'a', label: 'Alpha', sublabel: 'first line\nsecond', x: 10, y: 20, group: 'g1', url: 'pages/a.html', color: '#112233', shape: 'diamond', size: 20 },
     { id: 'b', label: 'Beta', x: -5, y: 8, group: 'g2' },
     { id: 'c', x: 0, y: 0 },
   ],
@@ -71,6 +71,7 @@ describe('format round trips', () => {
       expect(g.edges.some((e) => e.source === 'b' && e.target === 'b')).toBe(true);
       expect(g.getNode('a')!.url).toBe('pages/a.html');
       expect(g.getNode('a')!.group).toBe('g1');
+      expect(g.getNode('a')!.sublabel).toBe('first line\nsecond');
       expect(g.edges.find((e) => e.source === 'c')!.directed).toBe(false);
       expect(g.edges.find((e) => e.url === 'x.html')!.label).toBe('knows');
     });
@@ -264,5 +265,92 @@ describe('configuration and styling', () => {
     const w = createConfig({ edge: { widthByWeight: { enabled: true, min: 1, max: 5 } } });
     expect(resolveEdgeStyle(g.getEdge('e2')!, 1, w, { min: 1, max: 3 }).width).toBe(1);
     expect(resolveEdgeStyle(g.getEdge('e3')!, 3, w, { min: 1, max: 3 }).width).toBe(5);
+  });
+});
+
+describe('placement layouts respect node boxes', () => {
+  const boxes = (g: Graph): Map<string, { w: number; h: number }> => new Map(g.nodes.map((n) => [n.id, { w: 60, h: 40 }]));
+  const minDist = (p: Map<string, [number, number, number]>): number => {
+    const v = [...p.values()];
+    let m = Infinity;
+    for (let i = 0; i < v.length; i++) for (let j = i + 1; j < v.length; j++) m = Math.min(m, geometry.dist3(v[i], v[j]));
+    return m;
+  };
+
+  it('circle and grid keep neighbours apart by at least the box size', () => {
+    const g = new Graph(generateClustered({ nodes: 30, seed: 4 }));
+    expect(minDist(computeLayout(g, 'circle', { boxes: boxes(g), gap: 12 }))).toBeGreaterThan(58);
+    expect(minDist(computeLayout(g, 'grid', { boxes: boxes(g), gap: 12 }))).toBeGreaterThan(50);
+  });
+
+  it('layered layout leaves room between wide boxes in the same layer', () => {
+    const g = new Graph({
+      directed: true,
+      nodes: ['r', 'a', 'b', 'c'].map((id) => ({ id })),
+      edges: [['r', 'a'], ['r', 'b'], ['r', 'c']].map(([s, t], i) => ({ id: `e${i}`, source: s, target: t })),
+    });
+    const p = computeLayout(g, 'layered', { boxes: new Map(g.nodes.map((n) => [n.id, { w: 100, h: 30 }])), gap: 10 });
+    expect(Math.abs(p.get('a')![0] - p.get('b')![0])).toBeGreaterThan(109);
+  });
+});
+
+describe('tree layout', () => {
+  it('centers parents over their children and never overlaps subtrees', () => {
+    const g = new Graph({
+      directed: true,
+      nodes: ['root', 'a', 'b', 'a1', 'a2', 'a3', 'b1', 'x'].map((id) => ({ id })),
+      edges: [['root', 'a'], ['root', 'b'], ['a', 'a1'], ['a', 'a2'], ['a', 'a3'], ['b', 'b1'], ['b1', 'x'], ['x', 'root']].map(([s, t], i) => ({ id: `e${i}`, source: s, target: t })),
+    });
+    const boxes = new Map(g.nodes.map((n) => [n.id, { w: 50, h: 30 }]));
+    const p = computeLayout(g, 'tree', { boxes, gap: 10 });
+    const x = (id: string): number => p.get(id)![0];
+    const y = (id: string): number => p.get(id)![1];
+    expect(x('a')).toBeCloseTo((x('a1') + x('a3')) / 2, 5);
+    expect(x('root')).toBeCloseTo((x('a') + x('b')) / 2, 5);
+    expect(y('root')).toBeGreaterThan(y('a'));
+    expect(y('a')).toBeGreaterThan(y('a1'));
+    expect(y('a1')).toBe(y('b1'));
+    expect(x('a3')).toBeLessThan(x('b1'));
+    expect(x('a2') - x('a1')).toBeGreaterThan(59);
+    const lr = computeLayout(g, 'tree', { boxes, gap: 10, direction: 'LR' });
+    expect(lr.get('root')![0]).toBeLessThan(lr.get('a')![0]);
+  });
+
+  it('handles forests, cycles without entry and undirected graphs', () => {
+    const cyc = new Graph({ directed: true, nodes: ['a', 'b', 'c'].map((id) => ({ id })), edges: [['a', 'b'], ['b', 'c'], ['c', 'a']].map(([s, t], i) => ({ id: `e${i}`, source: s, target: t })) });
+    expect(computeLayout(cyc, 'tree').size).toBe(3);
+    const star = new Graph({ nodes: ['hub', 's1', 's2', 's3'].map((id) => ({ id })), edges: ['s1', 's2', 's3'].map((t, i) => ({ id: `e${i}`, source: t, target: 'hub' })) });
+    const p = computeLayout(star, 'tree');
+    expect(p.get('hub')![1]).toBeGreaterThan(p.get('s1')![1]);
+    const big = new Graph(generateClustered({ nodes: 800, directed: true, seed: 5 }));
+    expect([...computeLayout(big, 'tree').values()].every((v) => v.every(Number.isFinite))).toBe(true);
+  });
+});
+
+describe('mixed network generator', () => {
+  it('creates the requested node count with very different degrees', () => {
+    const data = generateMixedNetwork({ nodes: 1200, seed: 7 });
+    expect(data.nodes).toHaveLength(1200);
+    const g = new Graph(data);
+    const deg = new Map(g.nodes.map((n) => [n.id, 0]));
+    for (const e of g.edges) {
+      deg.set(e.source, deg.get(e.source)! + 1);
+      deg.set(e.target, deg.get(e.target)! + 1);
+    }
+    const degrees = [...deg.values()];
+    expect(Math.max(...degrees)).toBeGreaterThan(15);
+    expect(degrees.filter((d) => d === 0).length).toBeGreaterThan(20);
+    expect(g.nodes.filter((n) => n.group === 'Cliques' && deg.get(n.id)! >= 2).length).toBeGreaterThan(200);
+    expect(g.edges.some((e) => e.source === e.target)).toBe(true);
+    const pairs = new Set<string>();
+    let parallel = 0;
+    for (const e of g.edges) {
+      const k = e.source < e.target ? `${e.source}|${e.target}` : `${e.target}|${e.source}`;
+      if (pairs.has(k)) parallel++;
+      pairs.add(k);
+    }
+    expect(parallel).toBeGreaterThan(2);
+    expect(JSON.stringify(generateMixedNetwork({ nodes: 1200, seed: 7 }))).toBe(JSON.stringify(data));
+    expect(generateMixedNetwork({ nodes: 60, seed: 1 }).nodes).toHaveLength(60);
   });
 });

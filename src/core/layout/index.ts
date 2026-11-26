@@ -2,17 +2,24 @@ import type { LayoutName } from '../config';
 import type { Graph } from '../graph';
 import { mulberry32 } from '../random';
 import type { Dimension, Vec3 } from '../types';
+import { nodeBoxes, estimateTextBox, type Box } from './boxes';
 import { ForceSimulation } from './force';
 import { layeredLayout } from './layered';
 import { circleLayout, gridLayout, randomLayout, sphereLayout } from './simple';
+import { treeLayout } from './tree';
 
-export { ForceSimulation, layeredLayout, circleLayout, gridLayout, sphereLayout, randomLayout };
+export { ForceSimulation, layeredLayout, treeLayout, circleLayout, gridLayout, sphereLayout, randomLayout, nodeBoxes, estimateTextBox };
 export type { ForceOptions } from './force';
+export type { Box, PlaceOptions } from './boxes';
 
 export interface LayoutOptions {
   dimension: Dimension;
-  /** Distance between nodes for static layouts. */
+  /** Distance between nodes when no boxes are given, minimum otherwise. */
   spacing: number;
+  /** Free space between node boxes in the placement layouts. */
+  gap: number;
+  /** Node footprints (body + label); see `nodeBoxes`. Without them nodes are treated as `spacing` x `spacing` squares. */
+  boxes?: Map<string, Box>;
   /** Spring length of the force layout. */
   idealLength: number;
   gravity: number;
@@ -24,21 +31,22 @@ export interface LayoutOptions {
 }
 
 export const DEFAULT_LAYOUT_OPTIONS: LayoutOptions = {
-  dimension: '2d', spacing: 40, idealLength: 60, gravity: 0.05, weightMode: 'ignore', direction: 'TB', seed: 1, iterations: 300,
+  dimension: '2d', spacing: 40, gap: 12, idealLength: 60, gravity: 0.05, weightMode: 'ignore', direction: 'TB', seed: 1, iterations: 300,
 };
 
-export const LAYOUT_NAMES: LayoutName[] = ['force', 'layered', 'circle', 'grid', 'sphere', 'random'];
+export const LAYOUT_NAMES: LayoutName[] = ['force', 'tree', 'layered', 'circle', 'grid', 'sphere', 'random'];
 
 /** Computes positions without touching the graph. `force` runs synchronously to completion. */
 export function computeLayout(graph: Graph, name: LayoutName, options: Partial<LayoutOptions> = {}): Map<string, Vec3> {
   const o = { ...DEFAULT_LAYOUT_OPTIONS, ...options };
-  const dim3 = o.dimension === '3d';
+  const place = { spacing: o.spacing, gap: o.gap, boxes: o.boxes, dim3: o.dimension === '3d', seed: o.seed };
   switch (name) {
-    case 'circle': return circleLayout(graph, o.spacing);
-    case 'grid': return gridLayout(graph, o.spacing, dim3);
-    case 'sphere': return sphereLayout(graph, o.spacing);
-    case 'random': return randomLayout(graph, o.spacing, dim3, o.seed);
-    case 'layered': return layeredLayout(graph, { spacing: o.spacing, layerGap: o.spacing * 1.8, direction: o.direction });
+    case 'circle': return circleLayout(graph, place);
+    case 'grid': return gridLayout(graph, place);
+    case 'sphere': return sphereLayout(graph, place);
+    case 'random': return randomLayout(graph, place);
+    case 'layered': return layeredLayout(graph, { ...place, direction: o.direction });
+    case 'tree': return treeLayout(graph, { ...place, direction: o.direction });
     case 'force': {
       const sim = new ForceSimulation(graph, o);
       for (let i = 0; i < o.iterations && sim.alpha > 0.02; i++) sim.step();

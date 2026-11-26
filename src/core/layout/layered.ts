@@ -1,18 +1,16 @@
 import type { Graph } from '../graph';
 import type { Vec3 } from '../types';
+import { boxOf, type PlaceOptions } from './boxes';
 
-export interface LayeredOptions {
-  /** Distance between nodes within a layer. */
-  spacing: number;
-  /** Distance between layers. */
-  layerGap: number;
+export interface LayeredOptions extends PlaceOptions {
   /** TB: top to bottom, LR: left to right. */
   direction: 'TB' | 'LR';
 }
 
 /**
- * Hierarchical layout for class diagrams, evolution trees and flow charts:
- * cycle removal (DFS), longest-path layering, barycenter ordering, centered placement.
+ * Hierarchical layout (Sugiyama style) for DAG-like graphs with cross links: cycle removal (DFS),
+ * longest-path layering, barycenter ordering, then placement that respects the real node boxes.
+ * For clean trees use `treeLayout`.
  */
 export function layeredLayout(graph: Graph, o: LayeredOptions): Map<string, Vec3> {
   const ids = graph.nodes.map((n) => n.id);
@@ -44,7 +42,7 @@ export function layeredLayout(graph: Graph, o: LayeredOptions): Map<string, Vec3
           dfsOrder.push(v);
           dag[u].push(v);
           stack.push([v, 0]);
-        } else if (color[v] === 1) dag[v].push(u); // back edge -> reverse
+        } else if (color[v] === 1) dag[v].push(u);
         else dag[u].push(v);
       } else {
         color[u] = 2;
@@ -66,7 +64,6 @@ export function layeredLayout(graph: Graph, o: LayeredOptions): Map<string, Vec3
       if (--indeg[v] === 0) queue.push(v);
     }
   }
-
   const layers: number[][] = [];
   for (const u of dfsOrder) (layers[layer[u]] ??= []).push(u);
   const up: number[][] = Array.from({ length: n }, () => []);
@@ -74,12 +71,12 @@ export function layeredLayout(graph: Graph, o: LayeredOptions): Map<string, Vec3
 
   // 3. barycenter ordering
   const order = new Float64Array(n);
-  const refresh = (): void => layers.forEach((l) => l.forEach((u, i) => (order[u] = i)));
-  refresh();
+  layers.forEach((l) => l?.forEach((u, i) => (order[u] = i)));
   for (let pass = 0; pass < 8; pass++) {
     const down = pass % 2 === 0;
-    const seq = down ? layers.map((_, i) => i).slice(1) : layers.map((_, i) => i).reverse().slice(1);
-    for (const li of seq) {
+    const seq = layers.map((_, i) => i);
+    if (!down) seq.reverse();
+    for (const li of seq.slice(1)) {
       const l = layers[li];
       if (!l) continue;
       const bary = new Map<number, number>();
@@ -92,15 +89,26 @@ export function layeredLayout(graph: Graph, o: LayeredOptions): Map<string, Vec3
     }
   }
 
-  // 4. coordinates
+  // 4. coordinates from the real box sizes
+  const tb = o.direction === 'TB';
+  const along = (id: string): number => (tb ? boxOf(o, id).w : boxOf(o, id).h);
+  const across = (id: string): number => (tb ? boxOf(o, id).h : boxOf(o, id).w);
   const res = new Map<string, Vec3>();
+  let depth = 0;
+  let prevThickness = 0;
   layers.forEach((l, li) => {
     if (!l) return;
-    l.forEach((u, i) => {
-      const along = (i - (l.length - 1) / 2) * o.spacing;
-      const depth = li * o.layerGap;
-      res.set(ids[u], o.direction === 'TB' ? [along, -depth, 0] : [depth, -along, 0]);
-    });
+    const thickness = Math.max(...l.map((u) => across(ids[u])));
+    depth += li === 0 ? thickness / 2 : prevThickness / 2 + o.gap * 2.2 + thickness / 2;
+    prevThickness = thickness;
+    const total = l.reduce((s, u) => s + along(ids[u]), 0) + o.gap * (l.length - 1);
+    let cursor = -total / 2;
+    for (const u of l) {
+      const w = along(ids[u]);
+      const a = cursor + w / 2;
+      cursor += w + o.gap;
+      res.set(ids[u], tb ? [a, -depth, 0] : [depth, -a, 0]);
+    }
   });
   return res;
 }

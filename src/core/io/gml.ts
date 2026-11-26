@@ -71,6 +71,7 @@ export function parseGml(text: string): ImportResult {
     const body = getStr(v, 'body');
     b.addNode(id, {
       label: getStr(v, 'label'),
+      sublabel: getStr(v, 'sublabel'),
       x: gfx ? getNum(gfx, 'x') : undefined,
       y: gfx ? getNum(gfx, 'y') : undefined,
       z: gfx ? getNum(gfx, 'z') : undefined,
@@ -120,6 +121,7 @@ export function serializeGml(g: GraphData): string {
   for (const n of g.nodes) {
     out.push('  node [', `    id ${index.get(n.id)}`, `    gsId ${q(n.id)}`);
     if (n.label !== undefined) out.push(`    label ${q(n.label)}`);
+    if (n.sublabel) out.push(`    sublabel ${q(n.sublabel)}`);
     if (n.x !== undefined || n.y !== undefined) out.push(`    graphics [ x ${n.x ?? 0} y ${n.y ?? 0}${n.z !== undefined ? ` z ${n.z}` : ''} ]`);
     if (n.group) out.push(`    group ${q(n.group)}`);
     if (n.url) out.push(`    url ${q(n.url)}`);

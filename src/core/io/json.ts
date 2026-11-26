@@ -17,13 +17,14 @@ function extraProps(o: Obj, known: Set<string>): Record<string, PropValue> | und
   return Object.keys(props).length ? props : undefined;
 }
 
-const NODE_KEYS = new Set(['label', 'x', 'y', 'z', 'group', 'tags', 'url', 'color', 'shape', 'size', 'body', 'pinned', 'props']);
+const NODE_KEYS = new Set(['label', 'sublabel', 'x', 'y', 'z', 'group', 'tags', 'url', 'color', 'shape', 'size', 'body', 'pinned', 'props']);
 const EDGE_KEYS = new Set(['weight', 'directed', 'label', 'url', 'color', 'width', 'dashed', 'group', 'props']);
 
 function nodePatch(o: Obj): Partial<NodeData> {
   const shape = str(o.shape) as NodeShape | undefined;
   return {
     label: str(o.label ?? o.name),
+    sublabel: str(o.sublabel),
     x: toNumber(o.x),
     y: toNumber(o.y),
     z: toNumber(o.z),

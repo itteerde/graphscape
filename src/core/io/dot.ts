@@ -237,6 +237,8 @@ class Parser {
     const url = a.URL ?? a.href ?? a.url;
     if (url) patch.url = url;
     if (a.group) patch.group = a.group;
+    const subl = a.sublabel ?? a.xlabel;
+    if (subl) patch.sublabel = unescapeLabel(subl);
     Object.assign(n, patch);
     if (n.shape === 'card' && a.label !== undefined) {
       const fields = a.label.replace(/[{}]/g, '').split('|');
@@ -310,6 +312,7 @@ export function serializeDot(g: GraphData): string {
       if (n.label !== undefined) a.push(`label=${q(n.label)}`);
       if (n.shape) a.push(`shape=${SHAPES_OUT[n.shape]}`);
     }
+    if (n.sublabel) a.push(`sublabel=${q(n.sublabel)}`);
     if (n.color) a.push(`fillcolor=${q(n.color)}`, 'style=filled');
     if (n.url) a.push(`URL=${q(n.url)}`);
     if (n.group) a.push(`group=${q(n.group)}`);

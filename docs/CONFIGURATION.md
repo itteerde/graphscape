@@ -31,7 +31,7 @@ Built-in themes: `light` (default), `dark`, `blueprint`. Select with `theme`.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `node.color` | `#4e79a7` | fill, used when a node has no group color |
-| `node.shape` | `circle` | `circle square rectangle diamond hexagon triangle card` (3D: spheres, cards stay sprites) |
+| `node.shape` | `circle` | `circle square rectangle diamond hexagon triangle card`. In 2D these are flat polygons, in 3D real solids (sphere, box, octahedron, hexagonal and triangular prism); `card` is a sprite in both |
 | `node.size` | `14` | diameter in world units |
 | `node.aspect` | `1.6` | width / height of `rectangle` |
 | `node.borderColor` / `borderWidth` | `#2b3a4a` / `1` | outline |
@@ -74,10 +74,13 @@ The edge label is shown together with the weight, e.g. `mentor (2.5)`.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `label.show` | `true` | |
+| `label.subSize` / `subColor` | `4.6` / `#5f6b76` | size and color of a node's `sublabel` (second line) |
 | `label.font` / `size` / `color` / `background` | system-ui / `6` / `#1f2933` / `null` | size in world units (`screen` mode: CSS pixels) |
 | `label.mode` | `"world"` | `world`: scales with zoom, `screen`: constant pixel size |
 | `label.maxCount` | `1500` | labels are skipped above this node count (tooltips still work) |
-| `label.maxChars`, `gap`, `padding`, `resolution` | `40, 1.5, 1, 4` | truncation, distance below node, texture sharpness |
+| `label.maxChars`, `gap`, `padding`, `resolution` | `40, 1.5, 1, 4` | truncation per line, distance below node, texture sharpness |
+
+Labels may contain line breaks (`\n`), and a node can carry a `sublabel` that is drawn smaller below the label. In 3D the label is always placed in front of its own node, as seen from the camera.
 | `card.*` | | `background border headerBackground headerColor textColor font size padding` for `card` nodes (UML classes) |
 
 ### Selection
@@ -92,9 +95,10 @@ The edge label is shown together with the weight, e.g. `mentor (2.5)`.
 | `camera.autoFit` | `true` | fit on load and after a layout |
 | `camera.damping` | `false` | smooth camera motion (orbit mode) |
 | `camera.rotation` | `orbit` | 3D only. `orbit` keeps the horizon level and stops the tilt at the poles (OrbitControls). `free` is a trackball with unlimited rotation around every axis (TrackballControls); the horizon is not kept level and zoom goes to the view center |
-| `layout.name` | `force` | `force layered circle grid sphere random` |
+| `layout.name` | `force` | `force tree layered circle grid sphere random` |
 | `layout.idealLength` | `60` | spring length of the force layout |
-| `layout.spacing` | `40` | node distance of static layouts |
+| `layout.spacing` | `40` | minimum node distance when node boxes are unknown |
+| `layout.gap` | `14` | free space kept between node boxes (node + label) by `tree`, `layered`, `circle`, `grid`, `sphere` |
 | `layout.weightMode` | `ignore` | `strength`: heavier edges pull stronger |
 | `layout.gravity`, `direction`, `seed` | `0.05`, `TB`, `1` | `direction` is `TB` or `LR` for `layered` |
 | `layout.autoRun` | `true` | run the layout when loaded nodes have no coordinates |
@@ -115,6 +119,7 @@ The edge label is shown together with the weight, e.g. `mentor (2.5)`.
 | Key | Meaning |
 | --- | --- |
 | `ui.controls` | zoom, fit and 2D/3D buttons (default `true`) |
+| `ui.fullscreen` | adds a Full / Exit button (default `false`); `view.toggleFullscreen()` does the same from code |
 | `ui.injectStyles` | inject the default CSS once; set `false` to ship your own, `defaultCss` exports the text |
 | `ui.cssVars` | map of CSS custom properties set on the view as `--gs-<name>`: `font`, `panel-bg`, `panel-fg`, `panel-border`, `accent`, `radius` |
 
@@ -129,6 +134,7 @@ view.setConfig(patch); view.getConfig(); view.getUserConfig();
 view.setDimension('3d'); view.getDimension(); view.isFlat();
 view.runLayout('force' | 'layered' | ..., options?): Promise<void>; view.stopLayout();
 view.fit(); view.zoomBy(1.4); view.resize();
+view.toggleFullscreen(force?): Promise<void>; view.isFullscreen;
 view.getSelection(); view.setSelection({ nodes, edges }); view.selectAll(); view.clearSelection();
 view.setTool('select' | 'connect');
 view.openLink('node' | 'edge', id); view.closePanel();
@@ -138,15 +144,26 @@ view.graph   // the Graph model: addNode, updateNode, removeNode, addEdge, updat
 ```
 
 Events (`view.on(name, fn)` returns an unsubscribe function):
-`nodeclick nodedblclick edgeclick backgroundclick backgrounddblclick selection hover nodedragstart nodedragend connect link layoutstart layoutend dimensionchange`.
+`nodeclick nodedblclick edgeclick backgroundclick backgrounddblclick selection hover nodedragstart nodedragend connect link layoutstart layoutend dimensionchange fullscreenchange`.
 `link` fires before a link opens; set `event.handled = true` to open it yourself.
 
 Pure functions usable without a view (also in Node): `parseGraph`, `serializeGraph`, `detectFormat`, `computeLayout`, `generateClustered`, `resolveUrl`.
+
+## Layouts
+
+| Name | Use for |
+| --- | --- |
+| `force` | general networks; animated, spaces nodes by connectivity |
+| `tree` | clean hierarchy: parents centered over their children, no overlaps; roots are nodes without incoming edges (undirected graphs: best connected node). `layout.direction` `TB` or `LR` |
+| `layered` | DAG-like graphs with many cross links (class diagrams), minimizes crossings by layer ordering |
+| `circle`, `grid`, `sphere`, `random` | quick overviews; spacing follows the real node and label sizes plus `layout.gap` |
+
+The placement layouts size every node as body + label + sublabel (or the whole card), so labels do not collide.
 
 ## Recipes
 
 * **Read-only embed**: `interaction: { dragNodes: false, select: false, tooltip: true }`, `ui: { controls: false }`.
 * **Class diagrams**: import a yEd file with UML nodes, then `runLayout('layered')`; directed edges show arrows.
 * **Social network**: `edge.widthByWeight.enabled = true`, `groups.colors` per community, `label.mode: "screen"`.
-* **Evolution tree**: directed graph, `layout.name: "layered"`, `layout.direction: "LR"`, `weight.show: "always"` for time spans.
+* **Evolution tree**: directed graph, `layout.name: "tree"`, `layout.direction: "LR"`, `weight.show: "always"` for time spans.
 * **Match the site**: set `background.transparent: true` and `ui.cssVars` to the site's font and colors.

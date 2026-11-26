@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Graphscape: full screen</title>
+  <style>
+    body { font: 15px/1.5 system-ui, sans-serif; margin: 0 auto; max-width: 960px; padding: 16px; }
+    #graph { height: 460px; border: 1px solid #cfd6de; margin: 12px 0; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    button { height: 32px; padding: 0 12px; font: inherit; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>Full screen</h1>
+  <p>The view switches in and out of full screen from the <b>Full</b> button inside the graph, from the page button below,
+     or with the <kbd>F</kbd> key. <kbd>Esc</kbd> leaves it. Where the browser has no Fullscreen API (iPhone Safari) the view fills the viewport instead.</p>
+  <div class="row">
+    <button id="toggle" type="button">Toggle full screen</button>
+    <span id="state">windowed</span>
+  </div>
+  <div id="graph"></div>
+  <p>Hover a node for details. Diamonds are team leads (<code>shape</code> and <code>sublabel</code> on the node).
+     Ctrl-click a node with a link to open it, double-click works too. Drag with the left button to pan, wheel to zoom.</p>
+
+  <script src="../dist/standalone/graphscape.standalone.js"></script>
+  <script>
+    const { GraphView, parseGraph } = Graphscape;
+    const view = new GraphView(document.getElementById('graph'), {
+      theme: 'light',
+      ui: { fullscreen: true },                      // adds the Full / Exit button to the controls
+      links: { target: 'blank' },
+    });
+
+    fetch('../public/samples/social.json')
+      .then((r) => r.text())
+      .then((text) => view.load(parseGraph(text, { filename: 'social.json' }).graph));
+
+    const state = document.getElementById('state');
+    document.getElementById('toggle').addEventListener('click', () => view.toggleFullscreen());
+    view.on('fullscreenchange', ({ fullscreen }) => { state.textContent = fullscreen ? 'full screen' : 'windowed'; });
+    document.addEventListener('keydown', (e) => {
+      if (e.key.toLowerCase() === 'f' && !e.ctrlKey && !e.metaKey && !e.altKey && !/input|textarea|select/i.test(e.target.tagName)) view.toggleFullscreen();
+    });
+  </script>
+</body>
+</html>

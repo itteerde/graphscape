@@ -89,6 +89,7 @@ export function parseGraphML(text: string, opts: GraphMLImportOptions = {}): Imp
       case 'url': case 'href': case 'link': if (value) t.url = value; return;
       case 'color': if (value) t.color = value; return;
       case 'group': if (value) t.group = value; return;
+      case 'sublabel': if (isNode && value) t.sublabel = value; return;
       case 'weight': case 'value': if (!isNode) t.weight = toNumber(value); return;
       case 'x': case 'y': case 'z': case 'size': { const n = toNumber(value); if (isNode && n !== undefined) t[name] = n; return; }
       case 'shape': if (isNode && NODE_SHAPES.includes(value as NodeShape)) t.shape = value; return;
@@ -246,6 +247,7 @@ export function serializeGraphML(g: GraphData, opts: GraphMLExportOptions = {}):
     const data: string[] = [`<data key="d0">${gfx}</data>`];
     if (n.url) data.push(`<data key="${keyId('node', 'url', 'string')}">${escapeXml(n.url)}</data>`);
     if (n.group) data.push(`<data key="${keyId('node', 'group', 'string')}">${escapeXml(n.group)}</data>`);
+    if (n.sublabel) data.push(`<data key="${keyId('node', 'sublabel', 'string')}">${escapeXml(n.sublabel)}</data>`);
     if (n.z !== undefined) data.push(`<data key="${keyId('node', 'z', 'double')}">${n.z}</data>`);
     if (n.color && !toHex6(n.color)) data.push(`<data key="${keyId('node', 'color', 'string')}">${escapeXml(n.color)}</data>`);
     for (const [k, v] of Object.entries(n.props ?? {})) data.push(`<data key="${keyId('node', k, attrType(v))}">${escapeXml(String(v))}</data>`);

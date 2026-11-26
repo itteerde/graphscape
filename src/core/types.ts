@@ -13,6 +13,8 @@ export const DEFAULT_WEIGHT = 1;
 export interface NodeData {
   id: string;
   label?: string;
+  /** Smaller second line below the label. Labels themselves may contain line breaks (\n). */
+  sublabel?: string;
   x?: number;
   y?: number;
   z?: number;

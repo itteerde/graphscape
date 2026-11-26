@@ -5,7 +5,7 @@ import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import {
-  DEFAULT_LAYOUT_OPTIONS, Emitter, ForceSimulation, Graph, buildGroupIndex, computeLayout, createConfig, geometry, mergeConfig,
+  DEFAULT_LAYOUT_OPTIONS, nodeBoxes, Emitter, ForceSimulation, Graph, buildGroupIndex, computeLayout, createConfig, geometry, mergeConfig,
   placeNewNodes, resolveEdgeStyle, resolveNodeStyle, resolveUrl,
 } from '../core/index';
 import type {
@@ -49,6 +49,7 @@ export interface ViewEvents {
   layoutstart: { name: LayoutName };
   layoutend: { name: LayoutName; completed: boolean };
   dimensionchange: { dimension: Dimension };
+  fullscreenchange: { fullscreen: boolean };
 }
 
 interface Layer {
@@ -179,6 +180,7 @@ export class GraphView {
   private boxEl: HTMLDivElement;
   private controlsEl: HTMLDivElement | null = null;
   private dimButton: HTMLButtonElement | null = null;
+  private fsButton: HTMLButtonElement | null = null;
   private panelEl: HTMLDivElement | null = null;
 
   private tmpM = new THREE.Matrix4();
@@ -233,6 +235,7 @@ export class GraphView {
     window.addEventListener('keydown', this.onKeyDown);
     window.addEventListener('keyup', this.onKeyUp);
     window.addEventListener('blur', this.onBlur);
+    document.addEventListener('fullscreenchange', this.onFullscreenChange);
     if (typeof ResizeObserver !== 'undefined') {
       this.ro = new ResizeObserver(() => this.resize());
       this.ro.observe(container);
@@ -344,6 +347,8 @@ export class GraphView {
       weightMode: cfg.layout.weightMode,
       direction: cfg.layout.direction,
       seed: cfg.layout.seed,
+      gap: cfg.layout.gap,
+      boxes: nodeBoxes(g, cfg, cfg.dimension === '3d'),
       ...options,
     };
     this.events.emit('layoutstart', { name });
@@ -481,6 +486,45 @@ export class GraphView {
     return this.edgeInfo.get(id)?.style;
   }
 
+  /** True while the view is shown full screen (native Fullscreen API or the CSS fallback). */
+  get isFullscreen(): boolean {
+    return document.fullscreenElement === this.container || this.container.classList.contains('gs-pseudo-fullscreen');
+  }
+
+  /**
+   * Switches the whole view (container) in or out of full screen. Uses the Fullscreen API and falls back to a
+   * fixed, viewport-filling container where it is unavailable (e.g. iPhone Safari). Must be called from a user gesture.
+   * Esc leaves full screen in both variants.
+   */
+  async toggleFullscreen(force?: boolean): Promise<void> {
+    const want = force ?? !this.isFullscreen;
+    if (want === this.isFullscreen) return;
+    const c = this.container;
+    if (want) {
+      if (typeof c.requestFullscreen === 'function') {
+        try {
+          await c.requestFullscreen();
+          return; // the fullscreenchange event finishes the job
+        } catch {
+          /* denied: use the fallback below */
+        }
+      }
+      c.classList.add('gs-pseudo-fullscreen');
+    } else if (document.fullscreenElement === c) {
+      await document.exitFullscreen();
+      return;
+    } else c.classList.remove('gs-pseudo-fullscreen');
+    this.onFullscreenChange();
+  }
+
+  private onFullscreenChange = (): void => {
+    if (this.disposed) return;
+    const fs = this.isFullscreen;
+    if (this.fsButton) this.fsButton.textContent = fs ? 'Exit' : 'Full';
+    this.resize();
+    this.events.emit('fullscreenchange', { fullscreen: fs });
+  };
+
   /** Opens the url of a node or edge according to `links` (self / blank / panel / event). */
   openLink(kind: 'node' | 'edge', id: string): boolean {
     const item = kind === 'node' ? this._graph.getNode(id) : this._graph.getEdge(id);
@@ -555,6 +599,8 @@ export class GraphView {
     window.removeEventListener('keydown', this.onKeyDown);
     window.removeEventListener('keyup', this.onKeyUp);
     window.removeEventListener('blur', this.onBlur);
+    document.removeEventListener('fullscreenchange', this.onFullscreenChange);
+    this.container.classList.remove('gs-pseudo-fullscreen');
     this.setAxisGuide(null);
     this.disposeControls();
     this.clearScene();
@@ -661,7 +707,7 @@ export class GraphView {
   }
 
   private onCameraChange = (): void => {
-    if (this.config.label.mode === 'screen') this.dirtyLabels = true;
+    if (this.config.label.mode === 'screen' || this.config.dimension === '3d') this.dirtyLabels = true;
     this.requestRender();
   };
 
@@ -698,6 +744,12 @@ export class GraphView {
     this.dimButton = mk(this.config.dimension === '2d' ? '3D' : '2D', 'Switch between 2D and 3D', () => {
       this.setDimension(this.config.dimension === '2d' ? '3d' : '2d');
     });
+    this.fsButton = null;
+    if (this.config.ui.fullscreen) {
+      this.fsButton = mk(this.isFullscreen ? 'Exit' : 'Full', 'Toggle full screen', () => {
+        void this.toggleFullscreen();
+      });
+    }
     this.root.appendChild(el);
     this.controlsEl = el;
   }
@@ -778,7 +830,12 @@ export class GraphView {
     let g = this.geoms.get(key);
     if (g) return g;
     switch (key) {
-      case 'sphere': g = new THREE.SphereGeometry(0.5, 24, 16); break;
+      case 'circle3d': g = new THREE.SphereGeometry(0.5, 24, 16); break;
+      case 'square3d':
+      case 'rectangle3d': g = new THREE.BoxGeometry(1, 1, 1); break;
+      case 'diamond3d': g = new THREE.OctahedronGeometry(0.62); break;
+      case 'hexagon3d': g = new THREE.CylinderGeometry(0.5, 0.5, 1, 6); g.rotateX(Math.PI / 2); g.rotateZ(Math.PI / 2); break;
+      case 'triangle3d': g = new THREE.CylinderGeometry(0.5, 0.5, 1, 3); g.rotateX(-Math.PI / 2); break;
       case 'square':
       case 'rectangle': g = new THREE.PlaneGeometry(1, 1); break;
       case 'diamond': g = new THREE.CircleGeometry(0.5, 4); break;
@@ -876,7 +933,7 @@ export class GraphView {
         if (dim3) info.body.hw = info.body.hh = Math.max(info.body.hw, info.body.hh);
         info.sprite = this.makeSprite(info.card, 4);
       } else {
-        info.layerKey = dim3 ? 'sphere' : style.shape;
+        info.layerKey = dim3 ? `${style.shape}3d` : style.shape;
         const list = byLayer.get(info.layerKey) ?? [];
         list.push(info);
         byLayer.set(info.layerKey, list);
@@ -910,7 +967,8 @@ export class GraphView {
     if (cfg.label.show && g.nodes.length <= cfg.label.maxCount) {
       for (const info of this.nodeInfo.values()) {
         if (info.card) continue;
-        const img = this.tex.text(info.node.label ?? info.node.id, { ...cfg.label, color: info.style.labelColor });
+        const sub = info.node.sublabel ? { text: info.node.sublabel, size: cfg.label.subSize, color: cfg.label.subColor } : undefined;
+        const img = this.tex.text(info.node.label ?? info.node.id, { ...cfg.label, color: info.style.labelColor }, sub);
         info.sprite = this.makeSprite(img, 5);
       }
     }
@@ -1115,6 +1173,7 @@ export class GraphView {
   private updateLabels(): void {
     const cfg = this.config;
     const screen = cfg.label.mode === 'screen';
+    const dim3 = cfg.dimension === '3d';
     for (const info of this.nodeInfo.values()) {
       const s = info.sprite;
       if (!s) continue;
@@ -1131,6 +1190,7 @@ export class GraphView {
       const h = (img.height / res) * u;
       s.scale.set(w, h, 1);
       s.position.set(x, y - info.body.hh - cfg.label.gap * u - h / 2, z);
+      if (dim3) this.towardCamera(s.position, info.body.hw + 1);
     }
     for (const info of this.edgeInfo.values()) {
       const s = info.sprite;
@@ -1143,7 +1203,15 @@ export class GraphView {
       s.visible = true;
       s.scale.set(info.img.w * u, info.img.h * u, 1);
       s.position.set(p[0], p[1], p[2]);
+      if (dim3) this.towardCamera(s.position, 1.5);
     }
+  }
+
+  /** Moves a point toward the camera so a label always sits in front of the node it belongs to. */
+  private towardCamera(pos: THREE.Vector3, distance: number): void {
+    const d = this.tmpV2.copy(this.persp.position).sub(pos);
+    if (d.lengthSq() < 1e-9) return;
+    pos.addScaledVector(d.normalize(), distance);
   }
 
   /** CSS pixels per world unit at a world position. */
@@ -1515,6 +1583,7 @@ export class GraphView {
   }
 
   private onKeyDown = (e: KeyboardEvent): void => {
+    if (e.key === 'Escape' && this.container.classList.contains('gs-pseudo-fullscreen')) void this.toggleFullscreen(false);
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const t = e.target as HTMLElement | null;
     if (t?.matches?.('input, textarea, select')) return;
@@ -1607,6 +1676,7 @@ export class GraphView {
       const n = g.getNode(hit.id);
       if (!n) return;
       line(n.label ?? n.id, 'gs-tt-title');
+      if (n.sublabel) line(n.sublabel, 'gs-tt-muted');
       if (n.group) line(n.group, 'gs-tt-muted');
       if (n.url) line(n.url, 'gs-tt-muted');
       for (const [k, v] of Object.entries(n.props ?? {})) line(`${k}: ${v}`, 'gs-tt-muted');

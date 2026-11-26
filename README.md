@@ -30,6 +30,8 @@ After `npm run build`, `npm run serve` (a tiny dependency-free Node server) prin
 
 * `http://localhost:4173/dist/editor/index.html` the editor (built, relative paths, can be copied to any folder)
 * `http://localhost:4173/examples/standalone.html` script-tag examples including a skin file
+* `http://localhost:4173/examples/fullscreen.html` the view switching in and out of full screen (button, `F` key, `Esc`)
+* `http://localhost:4173/examples/large-network.html` 1200 nodes with cliques, hubs, chains, leaves and isolated nodes; layout selector, 2D/3D and full screen
 
 On Windows PowerShell the same commands work unchanged.
 
@@ -97,11 +99,11 @@ With `target: "event"` (or `event.handled = true` in a `link` listener) you deci
 | Select | click; Shift-click toggles; Shift-drag on the background draws a selection box; Ctrl+A |
 | Add node | double-click the background, or tool **Node** (N) and click |
 | Add edge | tool **Edge** (E), drag from node to node; release on the same node for a self loop; or select two nodes and press **Connect** |
-| Edit | inspector on the right: label, group, URL, color, shape, size, pinned, card body; for edges weight, label, URL, color, direction, dashed, width |
+| Edit | inspector on the right: label (multi-line), subline, group, URL, color, shape, size, pinned, card body; for edges weight, label, URL, color, direction, dashed, width |
 | Delete | Del / Backspace |
 | Undo / redo | Ctrl+Z / Ctrl+Y |
 | 2D / 3D | button in the toolbar, stored per graph (`meta.dimension`); 3D rotation is `orbit` or `free` (Graph panel) |
-| Layout | force, layered (class diagrams, trees), circle, grid, sphere, random |
+| Layout | force, tree (clean hierarchy), layered (class diagrams), circle, grid, sphere, random |
 | Import | Open..., drag and drop a file onto the canvas, or Samples |
 | Export | JSON, GraphML (opens in yEd), GML, DOT, CSV, PNG |
 | Skin | theme selector, or edit the configuration JSON in the inspector (nothing selected) |
@@ -139,6 +141,6 @@ There are no other runtime dependencies. XML/GraphML, GML, DOT and CSV parsing a
 ## Limits and honest notes
 
 * Interactive up to a few thousand nodes and tens of thousands of edges; larger graphs render and zoom well, but animated layouts become slow. Labels switch off above `label.maxCount`.
-* 3D draws all non-card shapes as spheres; edges and self loops are drawn as polylines (loops lie in the XY plane).
+* In 3D, shapes are real solids (sphere, box, octahedron, prisms); edges and self loops are polylines (loops lie in the XY plane).
 * yEd groups are flattened (the group node stays, members get `group`), table nodes, ports and bend points are ignored, edges with arrows on both ends become undirected.
 * Edges are hit-tested only up to `interaction.pickLimit` edges.
