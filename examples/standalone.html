@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Graphscape: script tag usage</title>
+  <style>
+    body { font: 15px/1.5 system-ui, sans-serif; margin: 0 auto; max-width: 960px; padding: 16px; }
+    .graph { height: 420px; border: 1px solid #cfd6de; margin: 12px 0 28px; }
+  </style>
+</head>
+<body>
+  <h1>Graphscape without a build step</h1>
+  <p>Run <code>npm run build</code> first, then <code>npm run serve</code> and open this page.</p>
+
+  <h2>1. Declarative: one attribute</h2>
+  <div class="graph" data-graphscape data-src="../public/samples/social.json" data-theme="light"></div>
+
+  <h2>2. Declarative with a skin file, 3D start</h2>
+  <div class="graph" data-graphscape data-src="../public/samples/evolution.json" data-config="skin.json" data-dimension="3d"></div>
+
+  <h2>3. Scripted</h2>
+  <div class="graph" id="scripted"></div>
+  <script src="../dist/standalone/graphscape.standalone.js"></script>
+  <script>
+    const view = new Graphscape.GraphView(document.getElementById('scripted'), {
+      theme: 'blueprint',
+      interaction: { openLinks: 'click' },
+      links: { target: 'event' },
+    });
+    view.load({
+      directed: true,
+      nodes: [
+        { id: 'a', label: 'Start', url: 'pages/start.html' },
+        { id: 'b', label: 'Middle' },
+        { id: 'c', label: 'End', url: 'pages/end.html' },
+      ],
+      edges: [
+        { source: 'a', target: 'b', weight: 2 },
+        { source: 'b', target: 'c' },
+        { source: 'c', target: 'c', label: 'retry' },
+      ],
+    });
+    view.on('link', (e) => { console.log('open', e.resolved); });
+  </script>
+</body>
+</html>

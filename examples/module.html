@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Graphscape: ES module usage (dev server)</title>
+  <style>html,body{height:100%;margin:0} #g{height:100%}</style>
+</head>
+<body>
+  <div id="g"></div>
+  <!-- With `npm run dev` open http://localhost:5173/examples/module.html -->
+  <script type="module">
+    import { GraphView, parseGraph } from '/src/lib/index.ts';
+    const text = await (await fetch('/samples/classes.graphml')).text();
+    const view = new GraphView(document.getElementById('g'), { theme: 'light', layout: { name: 'layered', direction: 'TB' } });
+    view.load(parseGraph(text, { filename: 'classes.graphml' }).graph);
+    view.runLayout('layered');
+  </script>
+</body>
+</html>

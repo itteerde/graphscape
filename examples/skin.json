@@ -1,0 +1,16 @@
+{
+  "theme": "dark",
+  "background": { "color": "#1b1410", "gradientTo": "#2a1e16" },
+  "node": { "shape": "hexagon", "size": 16, "borderColor": "#e0b872", "borderWidth": 1.5 },
+  "edge": { "color": "#b08d57", "width": 2, "curveSpacing": 20 },
+  "label": { "font": "Georgia, 'Times New Roman', serif", "size": 6.5, "color": "#f3e3c3", "mode": "screen" },
+  "groups": { "palette": ["#c8553d", "#6a994e", "#e0b872", "#4f7cac", "#9a6fb0"], "colors": { "Sales": "#e0b872" } },
+  "selection": { "color": "#ffd166", "hoverColor": "#f4a259" },
+  "rules": [
+    { "target": "node", "match": { "tag": "group" }, "style": { "shape": "square", "size": 22 } },
+    { "target": "edge", "match": { "prop": ["kind", "mentor"] }, "style": { "dashed": true, "color": "#ffd166" } }
+  ],
+  "links": { "target": "panel", "baseUrl": "" },
+  "interaction": { "openLinks": "dblclick" },
+  "ui": { "cssVars": { "panel-bg": "rgba(42,30,22,0.96)", "panel-fg": "#f3e3c3", "panel-border": "#6b5238", "accent": "#e0b872", "radius": "2px" } }
+}
