@@ -419,7 +419,7 @@ function renderGraphPanel(): void {
       h('button', { textContent: 'Load file\u2026', onclick: () => $<HTMLInputElement>('cfgfile').click() }),
     ),
     cfgMsg,
-    h('p', { class: 'ed-hint', textContent: 'Select a node or edge to edit it. See docs/CONFIGURATION.md for every option.' }),
+    h('p', { class: 'ed-hint', textContent: 'Select a node or edge to edit it. See the README for every option.' }),
   );
 }
 
