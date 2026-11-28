@@ -6,11 +6,11 @@ import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import {
-  DEFAULT_LAYOUT_OPTIONS, nodeBoxes, Emitter, ForceSimulation, Graph, buildGroupIndex, computeLayout, createConfig, geometry, mergeConfig,
+  DEFAULT_LAYOUT_OPTIONS, NodeSearchIndex, describeLinkGesture, helpLines, nodeBoxes, Emitter, ForceSimulation, Graph, buildGroupIndex, computeLayout, createConfig, geometry, mergeConfig,
   placeNewNodes, resolveEdgeStyle, resolveNodeStyle, resolveUrl,
 } from '../core/index';
 import type {
-  ChangeKind, DeepPartial, Dimension, EdgeData, EdgeStyle, GraphData, GraphscapeConfig, LayoutName, LayoutOptions, NodeData, NodeStyle, Vec3,
+  SearchResult, ChangeKind, DeepPartial, Dimension, EdgeData, EdgeStyle, GraphData, GraphscapeConfig, LayoutName, LayoutOptions, NodeData, NodeStyle, Vec3,
 } from '../core/index';
 import { TextureCache, type TextImage } from './labels';
 import { injectStyles } from './styles';
@@ -53,6 +53,8 @@ export interface ViewEvents {
   dimensionchange: { dimension: Dimension };
   fullscreenchange: { fullscreen: boolean };
   gizmomode: { mode: GizmoMode };
+  /** Fired by the search box and by `view.search()`. */
+  search: { query: string; ids: string[]; tooShort: boolean };
 }
 
 interface Layer {
@@ -70,6 +72,7 @@ interface NodeInfo {
   slot: number;
   card?: TextImage;
   sprite?: THREE.Sprite;
+  badge?: THREE.Sprite;
 }
 
 interface EdgeInfo {
@@ -87,6 +90,7 @@ interface EdgeInfo {
   bucketKey: string;
   sprite?: THREE.Sprite;
   img?: TextImage;
+  badge?: THREE.Sprite;
 }
 
 interface Bucket {
@@ -184,6 +188,17 @@ export class GraphView {
   private controlsEl: HTMLDivElement | null = null;
   private dimButton: HTMLButtonElement | null = null;
   private fsButton: HTMLButtonElement | null = null;
+  private searchIndex: NodeSearchIndex | null = null;
+  private searchEl: HTMLDivElement | null = null;
+  private searchInput: HTMLInputElement | null = null;
+  private searchCount: HTMLSpanElement | null = null;
+  private searchText = '';
+  private searchActive = false;
+  private helpEl: HTMLDivElement | null = null;
+  private helpButton: HTMLButtonElement | null = null;
+  private pointerInside = false;
+  private chipEl: HTMLButtonElement;
+  private chipTarget: { kind: 'node' | 'edge'; id: string } | null = null;
 
   // transform gizmo: TransformControls attached to an invisible pivot at the center of the selection
   private tc: TransformControls | null = null;
@@ -231,10 +246,18 @@ export class GraphView {
     this.boxEl = document.createElement('div');
     this.boxEl.className = 'gs-box';
     this.boxEl.hidden = true;
-    this.root.append(this.tooltipEl, this.boxEl);
+    this.chipEl = document.createElement('button');
+    this.chipEl.type = 'button';
+    this.chipEl.className = 'gs-chip gs-ui';
+    this.chipEl.hidden = true;
+    this.chipEl.addEventListener('click', () => {
+      if (this.chipTarget) this.openLink(this.chipTarget.kind, this.chipTarget.id);
+    });
+    this.root.append(this.tooltipEl, this.boxEl, this.chipEl);
 
     this.setupCamera();
     this.buildControls();
+    this.buildSearch();
     this.applyAppearance();
 
     this.root.addEventListener('pointerdown', this.onPointerDown, true);
@@ -242,6 +265,7 @@ export class GraphView {
     this.root.addEventListener('pointerup', this.onPointerUp);
     this.root.addEventListener('pointercancel', this.onPointerUp);
     this.root.addEventListener('pointerleave', this.onPointerLeave);
+    this.root.addEventListener('pointerenter', () => { this.pointerInside = true; });
     this.root.addEventListener('dblclick', this.onDblClick);
     this.root.addEventListener('wheel', this.onWheel, { passive: true });
     window.addEventListener('keydown', this.onKeyDown);
@@ -297,11 +321,26 @@ export class GraphView {
     return this.userConfig;
   }
 
-  /** Deep-merges a patch into the user config and re-applies everything (theme, colors, labels, ...). */
+  /** Deep-merges a patch into the user config and re-applies everything (theme, colors, labels, buttons, ...). */
   setConfig(patch: DeepPartial<GraphscapeConfig>): void {
     const { dimension, ...rest } = patch;
+    this.applyUserConfig(mergeConfig(this.userConfig, rest));
+    if (dimension !== undefined) this.setDimension(dimension);
+  }
+
+  /**
+   * Replaces the whole user config (instead of merging into it): keys that are missing fall back to the
+   * theme and the defaults again. The current dimension is kept unless the new config names one.
+   */
+  setUserConfig(config: DeepPartial<GraphscapeConfig>): void {
+    const { dimension, ...rest } = config;
+    this.applyUserConfig({ ...rest, dimension: this.config.dimension });
+    if (dimension !== undefined) this.setDimension(dimension);
+  }
+
+  private applyUserConfig(next: DeepPartial<GraphscapeConfig>): void {
     const prevRotation = this.config.camera.rotation;
-    this.userConfig = mergeConfig(this.userConfig, rest);
+    this.userConfig = next;
     this.config = createConfig(this.userConfig);
     this.tex.resolution = this.config.label.resolution;
     this.tex.clear();
@@ -311,10 +350,12 @@ export class GraphView {
     if (this.orbit) this.orbit.enableDamping = this.config.camera.damping;
     this.applyControlLimits();
     this.applyAppearance();
+    this.buildControls();
+    this.buildSearch();
+    this.closeHelp();
     this.setupGizmo();
     this.dirtyStructure = true;
     this.requestRender();
-    if (dimension !== undefined) this.setDimension(dimension);
   }
 
   getDimension(): Dimension {
@@ -398,9 +439,10 @@ export class GraphView {
     return this.sim !== null;
   }
 
-  /** Frames the whole graph. */
-  fit(): void {
-    const infos = [...this.nodeInfo.values()];
+  /** Frames the whole graph, or only the given nodes. */
+  fit(ids?: string[]): void {
+    const infos = ids ? ids.map((id) => this.nodeInfo.get(id)).filter((i): i is NodeInfo => !!i) : [...this.nodeInfo.values()];
+    const subset = !!ids;
     const cam = this.camera;
     const dim3 = this.config.dimension === '3d';
     if (infos.length === 0) {
@@ -426,7 +468,8 @@ export class GraphView {
     }
     const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2, cz = (minZ + maxZ) / 2;
     const pad = this.config.camera.fitPadding;
-    const bw = Math.max(maxX - minX, 10), bh = Math.max(maxY - minY, 10), bd = maxZ - minZ;
+    const minSpan = subset ? 90 : 10; // a single match should not zoom in absurdly far
+    const bw = Math.max(maxX - minX, minSpan), bh = Math.max(maxY - minY, minSpan), bd = maxZ - minZ;
     if (!dim3) {
       const aspect = this.width / this.height;
       const zoom = Math.min((ORTHO_HEIGHT * aspect) / bw, ORTHO_HEIGHT / bh) / pad;
@@ -435,7 +478,7 @@ export class GraphView {
       this.controls.target.set(cx, cy, 0);
       this.ortho.updateProjectionMatrix();
     } else {
-      const radius = Math.max(0.5 * Math.hypot(bw, bh, bd), 10);
+      const radius = Math.max(0.5 * Math.hypot(bw, bh, bd), minSpan / 2);
       const vHalf = THREE.MathUtils.degToRad(this.persp.fov) / 2;
       const hHalf = Math.atan(Math.tan(vHalf) * (this.width / this.height));
       const dist = (radius / Math.sin(Math.min(vHalf, hHalf))) * pad * 0.8;
@@ -531,10 +574,22 @@ export class GraphView {
     this.onFullscreenChange();
   }
 
+  /** Icon button like in video players: four corners pointing out (enter) or in (exit). */
+  private updateFullscreenButton(): void {
+    const b = this.fsButton;
+    if (!b) return;
+    const fs = this.isFullscreen;
+    const path = fs ? 'M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5' : 'M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5';
+    b.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${path}"/></svg>`;
+    const label = fs ? 'Exit full screen' : 'Full screen';
+    b.title = label;
+    b.setAttribute('aria-label', label);
+  }
+
   private onFullscreenChange = (): void => {
     if (this.disposed) return;
     const fs = this.isFullscreen;
-    if (this.fsButton) this.fsButton.textContent = fs ? 'Exit' : 'Full';
+    this.updateFullscreenButton();
     this.resize();
     this.events.emit('fullscreenchange', { fullscreen: fs });
   };
@@ -637,6 +692,7 @@ export class GraphView {
     if (e.kind === 'position') this.dirtyPositions = true;
     else {
       if (this.sim) this.stopLayout();
+      this.searchIndex = null;
       this.dirtyStructure = true;
     }
     this.requestRender();
@@ -762,9 +818,15 @@ export class GraphView {
     });
     this.fsButton = null;
     if (this.config.ui.fullscreen) {
-      this.fsButton = mk(this.isFullscreen ? 'Exit' : 'Full', 'Toggle full screen', () => {
+      this.fsButton = mk('', 'Full screen', () => {
         void this.toggleFullscreen();
       });
+      this.updateFullscreenButton();
+    }
+    this.helpButton = null;
+    if (this.config.ui.help) {
+      this.helpButton = mk('?', 'Help: the controls of this view', () => this.toggleHelp());
+      this.helpButton.classList.add('gs-help-btn');
     }
     this.root.appendChild(el);
     this.controlsEl = el;
@@ -809,6 +871,7 @@ export class GraphView {
       this.updateLabels();
     }
     this.controls.update();
+    this.updateChip();
     if (this.config.dimension === '3d') {
       this.headlight.position.copy(this.persp.position);
       this.headlight.target.position.copy(this.controls.target);
@@ -894,8 +957,14 @@ export class GraphView {
       this.arrowMesh.dispose();
       this.arrowMesh = null;
     }
-    for (const i of this.nodeInfo.values()) if (i.sprite) this.dropSprite(i.sprite);
-    for (const i of this.edgeInfo.values()) if (i.sprite) this.dropSprite(i.sprite);
+    for (const i of this.nodeInfo.values()) {
+      if (i.sprite) this.dropSprite(i.sprite);
+      if (i.badge) this.dropSprite(i.badge);
+    }
+    for (const i of this.edgeInfo.values()) {
+      if (i.sprite) this.dropSprite(i.sprite);
+      if (i.badge) this.dropSprite(i.badge);
+    }
     this.nodeInfo.clear();
     this.edgeInfo.clear();
   }
@@ -1051,6 +1120,12 @@ export class GraphView {
         info.img = this.tex.text(text, { ...cfg.weight, maxChars: cfg.label.maxChars });
         info.sprite = this.makeSprite(info.img, 5);
       }
+    }
+
+    if (cfg.links.badge && cfg.interaction.openLinks !== 'never') {
+      const img = this.tex.badge(cfg.links.badgeColor);
+      for (const info of this.nodeInfo.values()) if (resolveUrl(info.node.url, cfg.links)) info.badge = this.makeSprite(img, 6);
+      for (const info of this.edgeInfo.values()) if (resolveUrl(info.edge.url, cfg.links)) info.badge = this.makeSprite(img, 6);
     }
 
     this.dirtyPositions = false;
@@ -1222,6 +1297,85 @@ export class GraphView {
       s.position.set(p[0], p[1], p[2]);
       if (dim3) this.towardCamera(s.position, 1.5);
     }
+    this.updateBadges();
+  }
+
+  /** Link badges: top right of a node, beside the middle of an edge. */
+  private updateBadges(): void {
+    const size = this.config.links.badgeSize;
+    const dim3 = this.config.dimension === '3d';
+    for (const info of this.nodeInfo.values()) {
+      const b = info.badge;
+      if (!b) continue;
+      const [x, y, z] = info.body.pos;
+      b.scale.set(size, size, 1);
+      b.position.set(x + info.body.hw * 0.72, y + info.body.hh * 0.72, z);
+      if (dim3) this.towardCamera(b.position, info.body.hw + 2);
+    }
+    for (const info of this.edgeInfo.values()) {
+      const b = info.badge;
+      if (!b) continue;
+      if (info.path.length < 2) {
+        b.visible = false;
+        continue;
+      }
+      const p = geometry.pointAtFraction(info.path, 0.5);
+      b.visible = true;
+      b.scale.set(size, size, 1);
+      b.position.set(p[0] + size * 0.9, p[1] + size * 0.9, p[2]);
+      if (dim3) this.towardCamera(b.position, 2);
+    }
+  }
+
+  /** The "Open page" chip next to a single selected node or edge that has a url. */
+  private updateChip(): void {
+    const el = this.chipEl;
+    const cfg = this.config;
+    const dragging = this.dragIds.length > 0 || this.gizmoDragging || (this.drag?.type === 'nodes' && this.drag.moved);
+    let target: { kind: 'node' | 'edge'; id: string; at: Vec3; dx: number; dy: number } | null = null;
+    if (cfg.links.chip && cfg.interaction.openLinks !== 'never' && !dragging) {
+      if (this.selNodes.size === 1 && this.selEdges.size === 0) {
+        const id = [...this.selNodes][0];
+        const info = this.nodeInfo.get(id);
+        if (info && resolveUrl(info.node.url, cfg.links)) {
+          const ppu = this.pxPerUnitAt(info.body.pos[0], info.body.pos[1], info.body.pos[2]);
+          target = { kind: 'node', id, at: info.body.pos, dx: info.body.hw * ppu + 8, dy: -info.body.hh * ppu - 4 };
+        }
+      } else if (this.selEdges.size === 1 && this.selNodes.size === 0) {
+        const id = [...this.selEdges][0];
+        const info = this.edgeInfo.get(id);
+        if (info && info.path.length >= 2 && resolveUrl(info.edge.url, cfg.links)) target = { kind: 'edge', id, at: geometry.pointAtFraction(info.path, 0.5), dx: 12, dy: -12 };
+      }
+    }
+    if (!target) {
+      if (!el.hidden) el.hidden = true;
+      this.chipTarget = null;
+      return;
+    }
+    this.camera.updateMatrixWorld();
+    const v = this.tmpV.set(target.at[0], target.at[1], target.at[2]).project(this.camera);
+    if (v.z < -1 || v.z > 1) {
+      el.hidden = true;
+      this.chipTarget = null;
+      return;
+    }
+    const label = `${cfg.links.chipLabel} \u2197`;
+    if (el.textContent !== label) el.textContent = label;
+    this.chipTarget = { kind: target.kind, id: target.id };
+    el.hidden = false;
+    const x = (v.x * 0.5 + 0.5) * this.width + target.dx;
+    const y = (-v.y * 0.5 + 0.5) * this.height + target.dy;
+    el.style.left = `${Math.max(4, Math.min(x, this.width - el.offsetWidth - 4))}px`;
+    el.style.top = `${Math.max(4, Math.min(y, this.height - el.offsetHeight - 4))}px`;
+  }
+
+  /** "Ctrl+click to open the page", or "" when the item has no usable link. */
+  private linkHint(url: string | undefined): string {
+    const cfg = this.config;
+    if (!cfg.links.hint || cfg.interaction.openLinks === 'never' || !resolveUrl(url, cfg.links)) return '';
+    const mac = typeof navigator !== 'undefined' && /mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent);
+    const gesture = describeLinkGesture(cfg.interaction.openLinks, mac);
+    return cfg.links.chip ? `${gesture} to open the page, or select it and use \u201c${cfg.links.chipLabel}\u201d` : `${gesture} to open the page`;
   }
 
   /** Moves a point toward the camera so a label always sits in front of the node it belongs to. */
@@ -1421,6 +1575,137 @@ export class GraphView {
     this.requestRender();
   }
 
+  // ------------------------------------------------------------------ search and help
+
+  /**
+   * Finds nodes (see `search` in the configuration for the syntax) and, by default, selects them.
+   * Returns the matches; terms shorter than `search.minChars` are ignored.
+   */
+  search(query: string, opts: { select?: boolean; fit?: boolean } = {}): SearchResult {
+    if (!this.searchIndex) this.searchIndex = new NodeSearchIndex(this._graph);
+    const res = this.searchIndex.search(query, { fields: this.config.search.fields, minChars: this.config.search.minChars });
+    if (opts.select ?? true) {
+      if (res.ids.length || (res.query.trim() !== '' && !res.tooShort)) {
+        this.searchActive = true;
+        this.setSelection({ nodes: res.ids });
+      } else if (this.searchActive) {
+        this.searchActive = false; // text deleted or too short: drop what the search selected
+        this.setSelection({});
+      }
+    }
+    if (opts.fit && res.ids.length) this.fit(res.ids);
+    this.events.emit('search', { query, ids: res.ids, tooShort: res.tooShort });
+    return res;
+  }
+
+  /** Clears the search box and the selection it made. */
+  clearSearch(): void {
+    this.searchText = '';
+    if (this.searchInput) this.searchInput.value = '';
+    this.search('');
+    if (this.searchCount) this.searchCount.textContent = '';
+  }
+
+  /** Puts the cursor into the search box (the editor binds this to Ctrl+F). */
+  focusSearch(): void {
+    this.searchInput?.focus();
+    this.searchInput?.select();
+  }
+
+  private buildSearch(): void {
+    this.searchEl?.remove();
+    this.searchEl = this.searchInput = this.searchCount = null;
+    if (!this.config.ui.search) return;
+    const box = document.createElement('div');
+    box.className = 'gs-search gs-ui';
+    box.setAttribute('role', 'search');
+    box.innerHTML = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/></svg>';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = 'Search\u2026';
+    input.setAttribute('aria-label', 'Search nodes and groups');
+    input.title = `Find nodes while you type. group:Sales, tag:x, id:n1 search one field. Enter zooms to the matches, Esc clears.`;
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    input.value = this.searchText;
+    const count = document.createElement('span');
+    count.className = 'gs-search-count';
+    count.setAttribute('aria-live', 'polite');
+    const clear = document.createElement('button');
+    clear.type = 'button';
+    clear.className = 'gs-search-clear';
+    clear.textContent = '\u00d7';
+    clear.title = 'Clear search';
+    clear.setAttribute('aria-label', 'Clear search');
+    const run = (fit: boolean): void => {
+      this.searchText = input.value;
+      const r = this.search(input.value, { fit });
+      const min = this.config.search.minChars;
+      count.textContent = r.ids.length ? `${r.ids.length} found` : r.tooShort ? `${min}+ characters` : input.value.trim() ? 'No match' : '';
+      clear.hidden = input.value === '';
+    };
+    input.addEventListener('input', () => run(false));
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        run(this.config.search.fitOnEnter);
+      } else if (e.key === 'Escape') {
+        e.stopPropagation();
+        this.clearSearch();
+        clear.hidden = true;
+        input.blur();
+      }
+    });
+    clear.addEventListener('click', () => {
+      this.clearSearch();
+      clear.hidden = true;
+      input.focus();
+    });
+    clear.hidden = input.value === '';
+    box.append(input, count, clear);
+    this.root.appendChild(box);
+    this.searchEl = box;
+    this.searchInput = input;
+    this.searchCount = count;
+  }
+
+  toggleHelp(): void {
+    if (this.helpEl) this.closeHelp();
+    else this.openHelp();
+  }
+
+  private openHelp(): void {
+    this.closeHelp();
+    const mac = typeof navigator !== 'undefined' && /mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent);
+    const box = document.createElement('div');
+    box.className = 'gs-help gs-ui';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-label', 'Controls');
+    const title = document.createElement('div');
+    title.className = 'gs-help-title';
+    title.textContent = 'Controls';
+    box.appendChild(title);
+    for (const l of helpLines(this.config, mac)) {
+      const row = document.createElement('div');
+      row.className = 'gs-help-row';
+      const k = document.createElement('b');
+      k.textContent = l.keys;
+      const t = document.createElement('span');
+      t.textContent = l.text;
+      row.append(k, t);
+      box.appendChild(row);
+    }
+    this.root.appendChild(box);
+    this.helpEl = box;
+    this.helpButton?.setAttribute('aria-expanded', 'true');
+  }
+
+  private closeHelp(): void {
+    this.helpEl?.remove();
+    this.helpEl = null;
+    this.helpButton?.setAttribute('aria-expanded', 'false');
+  }
+
   // ------------------------------------------------------------------ picking
 
   private ndc = new THREE.Vector2();
@@ -1497,6 +1782,7 @@ export class GraphView {
   };
 
   private onPointerDown = (e: PointerEvent): void => {
+    if (this.helpEl && !(e.target as Element).closest?.('.gs-help, .gs-help-btn')) this.closeHelp();
     if ((e.target as Element).closest?.('.gs-ui')) return;
     this.pointerIsDown = true;
     this.requestRender();
@@ -1681,6 +1967,7 @@ export class GraphView {
   };
 
   private onPointerLeave = (): void => {
+    this.pointerInside = false;
     if (this.drag) return;
     this.hideTooltip();
     if (this.hoverNode || this.hoverEdge) {
@@ -1784,6 +2071,12 @@ export class GraphView {
 
   private onKeyDown = (e: KeyboardEvent): void => {
     this.setSnap(e.ctrlKey || e.metaKey);
+    const typing = !!(e.target as HTMLElement | null)?.matches?.('input, textarea, select');
+    if (e.key === 'Escape' && this.helpEl) this.closeHelp();
+    if (e.key === '?' && this.pointerInside && !typing && this.config.ui.help) {
+      e.preventDefault();
+      this.toggleHelp();
+    }
     if (e.key === 'Escape' && this.container.classList.contains('gs-pseudo-fullscreen')) void this.toggleFullscreen(false);
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const t = e.target as HTMLElement | null;
@@ -1881,6 +2174,8 @@ export class GraphView {
       if (n.sublabel) line(n.sublabel, 'gs-tt-muted');
       if (n.group) line(n.group, 'gs-tt-muted');
       if (n.url) line(n.url, 'gs-tt-muted');
+      const nodeHint = this.linkHint(n.url);
+      if (nodeHint) line(nodeHint, 'gs-tt-hint');
       for (const [k, v] of Object.entries(n.props ?? {})) line(`${k}: ${v}`, 'gs-tt-muted');
     } else {
       const e = g.getEdge(hit.id);
@@ -1890,6 +2185,8 @@ export class GraphView {
       line(`weight ${g.weightOf(e)}`, 'gs-tt-muted');
       if (e.label) line(e.label);
       if (e.url) line(e.url, 'gs-tt-muted');
+      const edgeHint = this.linkHint(e.url);
+      if (edgeHint) line(edgeHint, 'gs-tt-hint');
     }
     el.hidden = false;
     this.moveTooltip(this.lastPointer);

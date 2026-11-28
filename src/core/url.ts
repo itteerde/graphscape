@@ -25,3 +25,15 @@ export function resolveUrl(raw: string | undefined, policy: LinkPolicy): string 
   if (url.startsWith('/') || url.startsWith('#') || url.startsWith('?') || !policy.baseUrl) return url;
   return policy.baseUrl.replace(/\/+$/, '') + '/' + url.replace(/^\.\//, '');
 }
+
+export type OpenLinksMode = 'click' | 'dblclick' | 'ctrl-click' | 'never';
+
+/** Short phrase for tooltips: how the visitor opens a link with the given mode ("" for `never`). */
+export function describeLinkGesture(mode: OpenLinksMode, mac = false): string {
+  switch (mode) {
+    case 'click': return 'Click';
+    case 'dblclick': return 'Double-click';
+    case 'ctrl-click': return mac ? 'Cmd+click' : 'Ctrl+click';
+    default: return '';
+  }
+}

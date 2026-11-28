@@ -96,6 +96,37 @@ export class TextureCache {
     return img;
   }
 
+  /** Round badge with an arrow pointing to the upper right ("opens something"). One unit wide and high. */
+  badge(color: string): TextImage {
+    const key = JSON.stringify(['b', color]);
+    const hit = this.map.get(key);
+    if (hit) return hit;
+    const px = 64;
+    const c = document.createElement('canvas');
+    c.width = c.height = px;
+    const ctx = c.getContext('2d')!;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(px / 2, px / 2, px / 2 - 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#ffffff';
+    ctx.stroke();
+    ctx.lineWidth = 6;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(22, 42);
+    ctx.lineTo(42, 22);
+    ctx.moveTo(26, 22);
+    ctx.lineTo(42, 22);
+    ctx.lineTo(42, 38);
+    ctx.stroke();
+    const img: TextImage = { texture: this.make(c), w: 1, h: 1 };
+    this.map.set(key, img);
+    return img;
+  }
+
   /** UML-like card: title in a header band, body lines below; a line `---` draws a separator. */
   card(node: NodeData, style: NodeStyle, cfg: GraphscapeConfig): TextImage {
     const k = cfg.card;

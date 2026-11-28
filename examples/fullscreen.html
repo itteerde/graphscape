@@ -13,7 +13,7 @@
 </head>
 <body>
   <h1>Full screen</h1>
-  <p>The view switches in and out of full screen from the <b>Full</b> button inside the graph, from the page button below,
+  <p>The view switches in and out of full screen from the full screen icon inside the graph, from the page button below,
      or with the <kbd>F</kbd> key. <kbd>Esc</kbd> leaves it. Where the browser has no Fullscreen API (iPhone Safari) the view fills the viewport instead.</p>
   <div class="row">
     <button id="toggle" type="button">Toggle full screen</button>
@@ -21,14 +21,14 @@
   </div>
   <div id="graph"></div>
   <p>Hover a node for details. Diamonds are team leads (<code>shape</code> and <code>sublabel</code> on the node).
-     Ctrl-click a node with a link to open it, double-click works too. Drag with the left button to pan, wheel to zoom.</p>
+     Linked nodes carry a small badge: Ctrl-click opens the page, or select the node and press the <b>Open page</b> chip. Drag with the left button to pan, wheel to zoom.</p>
 
   <script src="../dist/standalone/graphscape.standalone.js"></script>
   <script>
     const { GraphView, parseGraph } = Graphscape;
     const view = new GraphView(document.getElementById('graph'), {
       theme: 'light',
-      ui: { fullscreen: true },                      // adds the Full / Exit button to the controls
+      ui: { fullscreen: true },                      // the full screen icon button; on by default, set false to remove it
       links: { target: 'blank' },
     });
 

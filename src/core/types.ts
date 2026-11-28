@@ -7,6 +7,9 @@ export const NODE_SHAPES: readonly NodeShape[] = ['circle', 'square', 'rectangle
 
 export type PropValue = string | number | boolean;
 
+/** Node fields the search looks at. */
+export type SearchField = 'label' | 'sublabel' | 'id' | 'group' | 'tags' | 'url' | 'props';
+
 /** Weight used when an edge has none. Edges with this weight never display a weight label in `auto` mode. */
 export const DEFAULT_WEIGHT = 1;
 

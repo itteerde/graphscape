@@ -6,7 +6,8 @@ export interface ForceOptions {
   dimension: Dimension;
   idealLength: number;
   gravity: number;
-  weightMode: 'ignore' | 'strength';
+  /** `closer`: heavier edge = shorter (similarity, strength). `longer`: heavier edge = longer (distance, cost). */
+  weightMode: 'ignore' | 'closer' | 'longer';
   seed: number;
 }
 
@@ -54,11 +55,17 @@ export class ForceSimulation {
     this.ea = new Int32Array(list.length);
     this.eb = new Int32Array(list.length);
     this.es = new Float64Array(list.length);
+    // Weights set the length an edge aims for, relative to the median weight so the overall size stays at idealLength.
+    // An isolated pair settles where attraction d^2/(k*m^3) meets repulsion k^2/d, i.e. at d = m * k.
+    const sorted = list.map((e) => graph.weightOf(e)).filter((w) => w > 0).sort((a, b) => a - b);
+    const median = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 1;
     list.forEach((e, i) => {
       this.ea[i] = this.index.get(e.source)!;
       this.eb[i] = this.index.get(e.target)!;
-      const w = graph.weightOf(e);
-      this.es[i] = o.weightMode === 'strength' ? Math.min(4, Math.max(0.25, Math.sqrt(Math.max(w, 0)))) : 1;
+      const w = Math.max(graph.weightOf(e), 1e-6);
+      const ratio = o.weightMode === 'closer' ? median / w : o.weightMode === 'longer' ? w / median : 1;
+      const mul = Math.min(4, Math.max(0.25, ratio));
+      this.es[i] = 1 / (mul * mul * mul);
     });
     this.t0 = this.k * 2;
     this.temperature = this.t0;

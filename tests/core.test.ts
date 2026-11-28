@@ -1,8 +1,8 @@
 import classesGraphml from '../public/samples/classes.graphml?raw';
 import { describe, expect, it } from 'vitest';
 import {
-  Graph, computeLayout, generateMixedNetwork, createConfig, detectFormat, generateClustered, geometry, mergeConfig, parseGraph, resolveEdgeStyle,
-  resolveNodeStyle, buildGroupIndex, resolveUrl, serializeGraph, ForceSimulation,
+  Graph, computeLayout, generateMixedNetwork, describeLinkGesture, NodeSearchIndex, parseQuery, helpLines, CONFIG_DOCS, configToJsonc, diffConfig, findUnknownKeys, parseJsonc, createConfig, detectFormat, generateClustered, geometry, mergeConfig, parseGraph, resolveEdgeStyle,
+  resolveNodeStyle, buildGroupIndex, resolveUrl, serializeGraph, ForceSimulation, undocumentedConfigPaths,
   type GraphData, type GraphFormat,
 } from '../src/core/index';
 
@@ -354,5 +354,157 @@ describe('mixed network generator', () => {
     expect(parallel).toBeGreaterThan(2);
     expect(JSON.stringify(generateMixedNetwork({ nodes: 1200, seed: 7 }))).toBe(JSON.stringify(data));
     expect(generateMixedNetwork({ nodes: 60, seed: 1 }).nodes).toHaveLength(60);
+  });
+});
+
+describe('commented configuration (JSON with comments)', () => {
+  it('documents every option of the defaults', () => {
+    expect(undocumentedConfigPaths()).toEqual([]);
+    expect(Object.keys(CONFIG_DOCS).length).toBeGreaterThan(100);
+  });
+
+  it('writes the full configuration with explanations and reads it back unchanged', () => {
+    const cfg = createConfig({ theme: 'dark', groups: { colors: { Sales: '#e0b872' } }, rules: [{ target: 'node', match: { group: 'x' }, style: { shape: 'diamond' } }] });
+    const text = configToJsonc(cfg);
+    expect(text).toContain('// Diameter in world units.');
+    expect(text).toContain('// Full screen / back button');
+    expect(JSON.stringify(parseJsonc(text))).toBe(JSON.stringify(cfg));
+  });
+
+  it('strips comments and trailing commas but keeps strings intact', () => {
+    const v = parseJsonc('{ "a": "http://x // not a comment", // c\n "b": [1, 2,], /* block */ "c": { "d": 1, }, }') as { a: string; b: number[]; c: { d: number } };
+    expect(v.a).toBe('http://x // not a comment');
+    expect(v.b).toEqual([1, 2]);
+    expect(v.c.d).toBe(1);
+    expect(() => parseJsonc('{ "a": }')).toThrow();
+  });
+
+  it('reduces a full configuration to what differs from defaults and theme', () => {
+    const base = createConfig({ theme: 'dark' });
+    const edited = JSON.parse(JSON.stringify(base));
+    edited.node.size = 20;
+    edited.ui.fullscreen = false;
+    edited.groups.colors.Sales = '#fff';
+    expect(diffConfig(base, edited)).toEqual({ node: { size: 20 }, groups: { colors: { Sales: '#fff' } }, ui: { fullscreen: false } });
+    expect(diffConfig(base, JSON.parse(JSON.stringify(base)))).toEqual({});
+  });
+
+  it('finds typos but allows user chosen keys', () => {
+    expect(findUnknownKeys({ node: { sizee: 1, size: 2 }, foo: 2, groups: { colors: { Anything: '#fff' } }, ui: { cssVars: { custom: 'x' } } })).toEqual(['node.sizee', 'foo']);
+  });
+
+  it('shows the full screen button by default and lets it be removed', () => {
+    expect(createConfig().ui.fullscreen).toBe(true);
+    expect(createConfig({ ui: { fullscreen: false } }).ui.fullscreen).toBe(false);
+  });
+});
+
+describe('link discoverability', () => {
+  it('opens links with Ctrl-click by default and offers badge, hint and chip', () => {
+    const c = createConfig();
+    expect(c.interaction.openLinks).toBe('ctrl-click');
+    expect(c.links.badge).toBe(true);
+    expect(c.links.hint).toBe(true);
+    expect(c.links.chip).toBe(true);
+    expect(c.links.chipLabel).toBe('Open page');
+  });
+
+  it('names the gesture for tooltips', () => {
+    expect(describeLinkGesture('ctrl-click')).toBe('Ctrl+click');
+    expect(describeLinkGesture('ctrl-click', true)).toBe('Cmd+click');
+    expect(describeLinkGesture('click')).toBe('Click');
+    expect(describeLinkGesture('dblclick')).toBe('Double-click');
+    expect(describeLinkGesture('never')).toBe('');
+  });
+});
+
+describe('edge weights in the force layout', () => {
+  const path = (): Graph =>
+    new Graph({
+      nodes: ['a', 'b', 'c'].map((id) => ({ id })),
+      edges: [{ id: 'e1', source: 'a', target: 'b', weight: 1 }, { id: 'e2', source: 'b', target: 'c', weight: 4 }],
+    });
+  const lengths = (mode: 'ignore' | 'closer' | 'longer'): [number, number] => {
+    const p = computeLayout(path(), 'force', { dimension: '2d', idealLength: 50, iterations: 800, weightMode: mode });
+    return [geometry.dist3(p.get('a')!, p.get('b')!), geometry.dist3(p.get('b')!, p.get('c')!)];
+  };
+
+  it('ignores weights by default', () => {
+    const [ab, bc] = lengths('ignore');
+    expect(Math.abs(ab - bc)).toBeLessThan(Math.min(ab, bc) * 0.15);
+  });
+
+  it('"longer" makes heavy edges long (distance semantics)', () => {
+    const [ab, bc] = lengths('longer');
+    expect(bc / ab).toBeGreaterThan(2);
+  });
+
+  it('"closer" makes heavy edges short (similarity semantics)', () => {
+    const [ab, bc] = lengths('closer');
+    expect(ab / bc).toBeGreaterThan(2);
+  });
+});
+
+describe('node search', () => {
+  const g = new Graph({
+    nodes: [
+      { id: 'n1', label: 'Ada Lovelace', group: 'Engineering', tags: ['math'], props: { year: 1815 } },
+      { id: 'n2', label: 'Grace Hopper', sublabel: 'Compiler pioneer', group: 'Engineering', url: 'pages/grace.html' },
+      { id: 'n3', label: 'Eva', group: 'Design Team' },
+      { id: 'n4', label: 'Adam', group: 'Sales' },
+    ],
+    edges: [],
+  });
+  const index = new NodeSearchIndex(g);
+
+  it('finds substrings in labels, sublabels, ids and groups, ignoring case', () => {
+    expect(index.search('ada').ids).toEqual(['n1', 'n4']);
+    expect(index.search('PIONEER').ids).toEqual(['n2']);
+    expect(index.search('n3').ids).toEqual(['n3']);
+    expect(index.search('engineer').ids).toEqual(['n1', 'n2']);
+  });
+
+  it('selects whole groups with a field prefix, quotes and several terms', () => {
+    expect(index.search('group:sales').ids).toEqual(['n4']);
+    expect(index.search('group:"design team"').ids).toEqual(['n3']);
+    expect(index.search('group:engineering grace').ids).toEqual(['n2']);
+    expect(index.search('tag:math').ids).toEqual(['n1']);
+    expect(index.search('1815').ids).toEqual(['n1']);
+    expect(index.search('pages/').ids).toEqual([]);
+    expect(index.search('url:pages/').ids).toEqual(['n2']);
+  });
+
+  it('ignores terms shorter than minChars and reports it', () => {
+    const r = index.search('a');
+    expect(r.ids).toEqual([]);
+    expect(r.tooShort).toBe(true);
+    expect(index.search('a', { minChars: 1 }).ids.length).toBeGreaterThan(0);
+    expect(index.search('').tooShort).toBe(false);
+    expect(parseQuery('http://x a:b')).toEqual([{ field: undefined, term: 'http://x' }, { field: undefined, term: 'a:b' }]);
+  });
+
+  it('stays fast for 10000 nodes', () => {
+    const big = new Graph(generateClustered({ nodes: 10000, seed: 3 }));
+    const idx = new NodeSearchIndex(big);
+    const t0 = Date.now();
+    for (let i = 0; i < 20; i++) idx.search('group 7 n12');
+    expect(Date.now() - t0).toBeLessThan(2000);
+    expect(idx.search('group:"group 1"').ids.length).toBeGreaterThan(100);
+  });
+});
+
+describe('help lines', () => {
+  it('lists only controls that exist', () => {
+    const text = (c = createConfig()): string => helpLines(c).map((l) => `${l.keys} ${l.text}`).join('\n');
+    expect(text()).toContain('Ctrl+click');
+    expect(text()).toContain('Open page');
+    expect(text()).toContain('Search box');
+    expect(text()).toContain('Esc');
+    expect(text()).toContain('Pan');
+    expect(text(createConfig({ dimension: '3d' }))).toContain('Rotate');
+    expect(text(createConfig({ interaction: { openLinks: 'never' } }))).not.toContain('Open the linked page');
+    expect(text(createConfig({ ui: { search: false, fullscreen: false } }))).not.toContain('Search box');
+    expect(text(createConfig({ interaction: { gizmo: true } }))).toContain('handles');
+    expect(text(createConfig())).not.toContain('handles');
   });
 });

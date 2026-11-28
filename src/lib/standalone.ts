@@ -1,4 +1,4 @@
-import { parseGraph, createConfig, type DeepPartial, type GraphscapeConfig } from '../core/index';
+import { parseGraph, parseJsonc, createConfig, type DeepPartial, type GraphscapeConfig } from '../core/index';
 import { GraphView } from './view';
 
 export * from './index';
@@ -18,7 +18,7 @@ async function fetchText(url: string): Promise<string> {
 
 /**
  * Turns every `<div data-graphscape data-src="graph.graphml">` into a view.
- * Optional attributes: `data-config` (JSON file), `data-theme`, `data-dimension`, `data-directed` (CSV only).
+ * Optional attributes: `data-config` (JSON file, comments and trailing commas allowed), `data-theme`, `data-dimension`, `data-directed` (CSV only).
  * Paths are relative to the page.
  */
 export async function autoInit(root: ParentNode = document): Promise<GraphView[]> {
@@ -29,7 +29,7 @@ export async function autoInit(root: ParentNode = document): Promise<GraphView[]
       if (instances.has(el)) return;
       try {
         let cfg: DeepPartial<GraphscapeConfig> = {};
-        if (el.dataset.config) cfg = JSON.parse(await fetchText(el.dataset.config)) as DeepPartial<GraphscapeConfig>;
+        if (el.dataset.config) cfg = parseJsonc(await fetchText(el.dataset.config)) as DeepPartial<GraphscapeConfig>;
         if (el.dataset.theme) cfg = { ...cfg, theme: el.dataset.theme };
         if (el.dataset.dimension === '2d' || el.dataset.dimension === '3d') cfg = { ...cfg, dimension: el.dataset.dimension };
         createConfig(cfg);

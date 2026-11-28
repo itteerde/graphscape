@@ -1,5 +1,5 @@
 import type { EdgeData, NodeData, NodeShape, PropValue } from './types';
-import type { Dimension } from './types';
+import type { Dimension, SearchField } from './types';
 
 export type LayoutName = 'force' | 'tree' | 'layered' | 'circle' | 'grid' | 'sphere' | 'random';
 
@@ -110,12 +110,21 @@ export interface GraphscapeConfig {
     spacing: number;
     /** Free space kept between node boxes (node plus label) by tree, layered, circle, grid and sphere layouts. */
     gap: number;
-    weightMode: 'ignore' | 'strength';
+    /** How edge weights act in the force layout: ignored, heavier = closer, or heavier = longer. */
+    weightMode: 'ignore' | 'closer' | 'longer';
     gravity: number;
     direction: 'TB' | 'LR';
     seed: number;
     /** Run the layout automatically when a loaded graph has nodes without positions. */
     autoRun: boolean;
+  };
+  search: {
+    /** Terms shorter than this are ignored (typing the first letters does not select half the graph). */
+    minChars: number;
+    /** Fields searched by plain terms. `field:term` always searches that field. */
+    fields: SearchField[];
+    /** Enter in the search box zooms to the matches. */
+    fitOnEnter: boolean;
   };
   interaction: {
     dragNodes: boolean;
@@ -136,10 +145,24 @@ export interface GraphscapeConfig {
     target: 'self' | 'blank' | 'panel' | 'event';
     allowAbsolute: boolean;
     panelSandbox: string;
+    /** Small link badge on nodes and edges that have a url. */
+    badge: boolean;
+    badgeColor: string;
+    /** Badge size in world units. */
+    badgeSize: number;
+    /** Tooltips of linked items say how to open the page. */
+    hint: boolean;
+    /** An "Open page" chip appears next to a single selected node or edge that has a url. */
+    chip: boolean;
+    chipLabel: string;
   };
   ui: {
     controls: boolean;
-    /** Adds a full screen button to the controls. */
+    /** Search box in the corner: finds and selects nodes and groups while typing. */
+    search: boolean;
+    /** Help button (question mark) that lists the controls of this view. */
+    help: boolean;
+    /** Full screen / back button in the corner (on by default; set false to remove it). */
     fullscreen: boolean;
     injectStyles: boolean;
     /** CSS custom properties set on the view root, without the `--gs-` prefix. */
@@ -181,11 +204,14 @@ export const DEFAULT_CONFIG: GraphscapeConfig = {
   rules: [],
   camera: { fov: 50, zoomMin: 0.02, zoomMax: 60, fitPadding: 1.25, autoFit: true, damping: false, rotation: 'orbit' },
   layout: { name: 'force', idealLength: 60, spacing: 40, gap: 14, weightMode: 'ignore', gravity: 0.05, direction: 'TB', seed: 1, autoRun: true },
-  interaction: { dragNodes: true, select: true, multiSelect: true, hover: true, tooltip: true, gizmo: false, axisLock: true, openLinks: 'dblclick', pickLimit: 20000 },
-  links: { baseUrl: '', target: 'self', allowAbsolute: false, panelSandbox: 'allow-same-origin allow-scripts allow-popups allow-forms' },
+  search: { minChars: 2, fields: ['label', 'sublabel', 'id', 'group', 'tags', 'props'], fitOnEnter: true },
+  interaction: { dragNodes: true, select: true, multiSelect: true, hover: true, tooltip: true, gizmo: false, axisLock: true, openLinks: 'ctrl-click', pickLimit: 20000 },
+  links: { baseUrl: '', target: 'self', allowAbsolute: false, panelSandbox: 'allow-same-origin allow-scripts allow-popups allow-forms', badge: true, badgeColor: '#1c7ed6', badgeSize: 5, hint: true, chip: true, chipLabel: 'Open page' },
   ui: {
     controls: true,
-    fullscreen: false,
+    search: true,
+    help: true,
+    fullscreen: true,
     injectStyles: true,
     cssVars: {
       font,
@@ -211,6 +237,7 @@ export const themes: Record<string, DeepPartial<GraphscapeConfig>> = {
     card: { background: '#1d242c', border: '#6b7886', textColor: '#e6ebf0' },
     selection: { color: '#ffa94d', hoverColor: '#ffd43b' },
     groups: { palette: ['#6aa6d9', '#ffa94d', '#ff7b7b', '#63d2c6', '#8fd36b', '#f2d45c', '#c9a0dc', '#ffb3c1', '#c4a07a', '#aab4bd'] },
+    links: { badgeColor: '#4dabf7' },
     ui: { cssVars: { 'panel-bg': 'rgba(29,36,44,0.96)', 'panel-fg': '#e6ebf0', 'panel-border': '#3a4652', accent: '#ffa94d' } },
   },
   blueprint: {
@@ -222,6 +249,7 @@ export const themes: Record<string, DeepPartial<GraphscapeConfig>> = {
     card: { background: '#0a2c4d', border: '#f4d35e', headerBackground: '#f4d35e', headerColor: '#0d3b66', textColor: '#faf0ca' },
     selection: { color: '#ee964b', hoverColor: '#f95738' },
     groups: { palette: ['#faf0ca', '#f4d35e', '#ee964b', '#f95738', '#a9c7e8', '#7fb7be', '#d3f3ee', '#e3b5a4'] },
+    links: { badgeColor: '#f4d35e' },
     ui: { cssVars: { 'panel-bg': 'rgba(10,44,77,0.96)', 'panel-fg': '#faf0ca', 'panel-border': '#2f5d8a', accent: '#f4d35e' } },
   },
 };

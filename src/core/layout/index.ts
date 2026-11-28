@@ -23,7 +23,7 @@ export interface LayoutOptions {
   /** Spring length of the force layout. */
   idealLength: number;
   gravity: number;
-  weightMode: 'ignore' | 'strength';
+  weightMode: 'ignore' | 'closer' | 'longer';
   direction: 'TB' | 'LR';
   seed: number;
   /** Maximum iterations of the synchronous force layout. */

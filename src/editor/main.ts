@@ -1,6 +1,7 @@
 import './editor.css';
 import {
-  FORMATS, Graph, GraphView, LAYOUT_NAMES, NODE_SHAPES, detectFormat, generateClustered, parseGraph, serializeGraph, themes,
+  FORMATS, Graph, GraphView, LAYOUT_NAMES, NODE_SHAPES, configToJsonc, createConfig, detectFormat, diffConfig, findUnknownKeys,
+  generateClustered, parseGraph, parseJsonc, serializeGraph, themes,
   type DeepPartial, type EdgeData, type GraphData, type GraphFormat, type GraphscapeConfig, type LayoutName, type NodeData, type NodeShape,
 } from '../lib/index';
 
@@ -53,6 +54,7 @@ class History {
     this.stack = [];
     this.i = -1;
   }
+  get current(): string | null { return this.stack[this.i] ?? null; }
   get canUndo(): boolean { return this.i > 0; }
   get canRedo(): boolean { return this.i < this.stack.length - 1; }
   undo(): string | null { return this.canUndo ? this.stack[--this.i] : null; }
@@ -68,10 +70,38 @@ function savedTheme(): string {
 
 const graph = new Graph();
 const history = new History();
+
+// ------------------------------------------------------------------ file state (Open, Save, Save as)
+
+interface FsWritable { write(data: string): Promise<void>; close(): Promise<void> }
+interface FsFileHandle { name: string; getFile(): Promise<File>; createWritable(): Promise<FsWritable> }
+interface FsPicker {
+  showOpenFilePicker?: (options?: object) => Promise<FsFileHandle[]>;
+  showSaveFilePicker?: (options?: object) => Promise<FsFileHandle>;
+}
+const fsApi = window as unknown as FsPicker;
+/** Chrome, Edge and Opera can open and overwrite files; other browsers can only download copies. */
+const canOverwrite = typeof fsApi.showOpenFilePicker === 'function' && typeof fsApi.showSaveFilePicker === 'function';
+
+interface OpenFile {
+  name: string;
+  format: GraphFormat;
+  /** Present when the browser allows writing back to the file. */
+  handle?: FsFileHandle;
+  /** Opened from disk (not created by Save as in this session). */
+  fromDisk: boolean;
+  /** The user already agreed to overwrite this file in this session. */
+  confirmed: boolean;
+}
+let currentFile: OpenFile | null = null;
+let savedSnapshot: string | null = null;
+const isDirty = (): boolean => history.current !== savedSnapshot;
+const fileName = (): string => currentFile?.name ?? 'Untitled graph';
 const baseConfig: DeepPartial<GraphscapeConfig> = {
   theme: savedTheme(),
   interaction: { openLinks: 'ctrl-click', gizmo: true },
   links: { target: 'blank', allowAbsolute: true },
+  ui: { fullscreen: false }, // full screen would hide the editor toolbar and inspector
 };
 const view = new GraphView($('stage'), baseConfig, graph);
 let tool: EditorTool = 'select';
@@ -92,12 +122,15 @@ function commit(): void {
   refreshChrome();
 }
 
-function loadGraphData(data: GraphData, note = ''): void {
+function loadGraphData(data: GraphData, note = '', file: OpenFile | null = null): void {
   history.reset();
   view.load(data);
   warning = '';
   message = note;
+  currentFile = file;
   commit();
+  savedSnapshot = history.current;
+  refreshChrome();
   renderInspector();
 }
 
@@ -159,7 +192,8 @@ const themeSel = h('select', { title: 'Theme', 'aria-label': 'Theme', onchange: 
   renderInspector();
 } }, ...Object.keys(themes).map((n) => h('option', { value: n, textContent: n })));
 themeSel.value = view.getConfig().theme;
-const formatSel = h('select', { title: 'Export format', 'aria-label': 'Export format' }, ...FORMATS.map((f) => h('option', { value: f.id, textContent: f.label })));
+const fileLabel = h('span', { class: 'ed-file' });
+const formatSel = h('select', { title: 'File format for new files' + (canOverwrite ? ' (you can also pick it in the Save as dialog)' : ' and downloads'), 'aria-label': 'File format' }, ...FORMATS.map((f) => h('option', { value: f.id, textContent: f.label })));
 const sampleSel = h('select', { title: 'Load a sample', 'aria-label': 'Samples', onchange: () => {
   const file = sampleSel.value;
   sampleSel.value = '';
@@ -169,18 +203,20 @@ const sampleSel = h('select', { title: 'Load a sample', 'aria-label': 'Samples',
 $('top').append(
   h('span', { class: 'ed-brand', textContent: 'Graphscape' }),
   h('div', { class: 'ed-group' },
-    h('button', { textContent: 'New', onclick: () => { if (!graph.nodes.length || confirm('Discard the current graph?')) loadGraphData({ directed: false, nodes: [], edges: [] }); } }),
-    h('button', { textContent: 'Open\u2026', onclick: () => $<HTMLInputElement>('file').click() }),
+    h('button', { textContent: 'New', title: 'New empty graph', onclick: () => void newGraph() }),
+    h('button', { textContent: 'Open\u2026', title: 'Open a graph file (Ctrl+O)', onclick: () => void openFile() }),
     sampleSel,
-    h('button', { textContent: 'Generate\u2026', title: 'Random clustered graph', onclick: generate }),
+    h('button', { textContent: 'Generate\u2026', title: 'Random clustered graph', onclick: () => void generate() }),
   ),
   h('div', { class: 'ed-group' },
+    h('button', { textContent: 'Save', title: 'Save to the open file (Ctrl+S)', onclick: () => void saveFile() }),
+    h('button', { textContent: 'Save as\u2026', title: 'Save under a new name (Ctrl+Shift+S)', onclick: () => void saveFileAs() }),
     formatSel,
-    h('button', { textContent: 'Save', title: 'Download in the selected format (Ctrl+S)', onclick: save }),
     h('button', { textContent: 'PNG', title: 'Export the current view as image', onclick: () => {
       const a = h('a', { href: view.exportImage(), download: `${graph.meta.title || 'graph'}.png` });
       a.click();
     } }),
+    fileLabel,
   ),
   h('div', { class: 'ed-group' }, undoBtn, redoBtn),
   h('div', { class: 'ed-group' },
@@ -221,6 +257,10 @@ function refreshChrome(): void {
   undoBtn.disabled = !history.canUndo;
   redoBtn.disabled = !history.canRedo;
   stopBtn.disabled = !view.isLayoutRunning;
+  const dirty = isDirty();
+  fileLabel.textContent = `${fileName()}${dirty ? ' \u2022' : ''}`;
+  fileLabel.title = dirty ? 'Unsaved changes' : currentFile?.handle ? 'Saved; Save overwrites this file' : 'No unsaved changes';
+  document.title = `${dirty ? '\u2022 ' : ''}${fileName()} \u2013 Graphscape`;
   const sel = view.getSelection();
   $('status').replaceChildren(
     h('span', { textContent: `${graph.nodes.length} nodes, ${graph.edges.length} edges, ${graph.directed ? 'directed' : 'undirected'}, ${view.getDimension().toUpperCase()}` }),
@@ -232,7 +272,147 @@ function refreshChrome(): void {
 
 // ------------------------------------------------------------------ files
 
+const LOSSY: Record<GraphFormat, string> = {
+  json: '',
+  graphml: 'Graphscape writes its own GraphML. Positions, colors, shapes, labels, URLs and weights are kept, but anything it does not model is lost, for example yEd bend points, ports, nested group containers, table nodes and custom node graphics.',
+  gml: 'Graphscape writes its own GML. Attributes it does not model are lost.',
+  dot: 'Graphscape writes its own DOT. Graphviz attributes it does not model (ranks, ports, most styles) are lost.',
+  csv: 'A CSV edge list only stores edges: node colors, shapes, groups, positions and other node details are not saved.',
+};
+
+/** Small modal question with custom buttons; Esc and the backdrop answer "cancel". */
+function ask(title: string, body: string, buttons: { label: string; value: string; primary?: boolean }[]): Promise<string> {
+  return new Promise((resolve) => {
+    const dlg = h('dialog', { class: 'ed-dialog ed-small', 'aria-label': title });
+    const row = h('div', { class: 'ed-actions' }, ...buttons.map((b) => h('button', { class: b.primary ? 'primary' : '', textContent: b.label, onclick: () => dlg.close(b.value) })));
+    dlg.append(h('div', { class: 'ed-dialog-body' }, h('h2', { class: 'ed-title', textContent: title }), h('p', { class: 'ed-pre', textContent: body }), row));
+    dlg.addEventListener('close', () => {
+      const v = dlg.returnValue || 'cancel';
+      dlg.remove();
+      resolve(v);
+    });
+    document.body.append(dlg);
+    dlg.showModal();
+    row.querySelector<HTMLElement>('button.primary')?.focus();
+  });
+}
+
+const isAbort = (e: unknown): boolean => e instanceof DOMException && e.name === 'AbortError';
+const formatOf = (name: string): GraphFormat | undefined => {
+  const ext = name.split('.').pop()?.toLowerCase() ?? '';
+  return FORMATS.find((f) => f.extensions.includes(ext))?.id;
+};
+const pickerTypes = (first?: GraphFormat): { description: string; accept: Record<string, string[]> }[] =>
+  [...FORMATS].sort((a, b) => (a.id === first ? -1 : b.id === first ? 1 : 0)).map((f) => ({ description: f.label, accept: { [f.mime]: f.extensions.map((e) => `.${e}`) } }));
+
+function serializeCurrent(format: GraphFormat): string {
+  const data = graph.toData();
+  data.meta = { ...data.meta, dimension: view.getDimension() };
+  return serializeGraph(data, format);
+}
+
+/** True when it is fine to replace the current graph: nothing unsaved, or the user saved or discarded it. */
+async function guardDirty(): Promise<boolean> {
+  if (!isDirty()) return true;
+  const answer = await ask('Unsaved changes', `Do you want to save the changes to "${fileName()}" first?`, [
+    { label: 'Save', value: 'save', primary: true },
+    { label: "Don't save", value: 'discard' },
+    { label: 'Cancel', value: 'cancel' },
+  ]);
+  if (answer === 'save') return saveFile();
+  return answer === 'discard';
+}
+
+async function writeTo(file: OpenFile): Promise<boolean> {
+  if (!file.handle) return false;
+  try {
+    const writable = await file.handle.createWritable();
+    await writable.write(serializeCurrent(file.format));
+    await writable.close();
+    savedSnapshot = history.current;
+    warning = '';
+    message = `Saved ${file.name}`;
+    refreshChrome();
+    return true;
+  } catch (err) {
+    warning = `Could not save ${file.name}: ${(err as Error).message}`;
+    refreshChrome();
+    return false;
+  }
+}
+
+/** Save: writes to the file that was opened or saved before, otherwise behaves like Save as. */
+async function saveFile(): Promise<boolean> {
+  const f = currentFile;
+  if (!f?.handle) return saveFileAs();
+  if (!isDirty()) {
+    message = 'No changes to save.';
+    refreshChrome();
+    return true;
+  }
+  if (f.fromDisk && !f.confirmed) {
+    const answer = await ask(`Overwrite ${f.name}?`, `${f.format === 'json' ? '' : LOSSY[f.format] + '\n\n'}This replaces the file on disk with the current graph. You will not be asked again for this file during this session.`, [
+      { label: 'Overwrite', value: 'ok', primary: true },
+      { label: 'Save as\u2026', value: 'as' },
+      { label: 'Cancel', value: 'cancel' },
+    ]);
+    if (answer === 'as') return saveFileAs();
+    if (answer !== 'ok') return false;
+    f.confirmed = true;
+  }
+  return writeTo(f);
+}
+
+/** Save as: the system dialog chooses folder, name and format and asks before replacing an existing file. */
+async function saveFileAs(): Promise<boolean> {
+  const preferred = currentFile?.format ?? (formatSel.value as GraphFormat);
+  if (canOverwrite && fsApi.showSaveFilePicker) {
+    try {
+      const ext = FORMATS.find((f) => f.id === preferred)!.extensions[0];
+      const handle = await fsApi.showSaveFilePicker({ suggestedName: currentFile?.name ?? `${graph.meta.title || 'graph'}.${ext}`, types: pickerTypes(preferred) });
+      const file: OpenFile = { name: handle.name, format: formatOf(handle.name) ?? preferred, handle, fromDisk: false, confirmed: true };
+      currentFile = file;
+      return writeTo(file);
+    } catch (err) {
+      if (!isAbort(err)) {
+        warning = `Could not save: ${(err as Error).message}`;
+        refreshChrome();
+      }
+      return false;
+    }
+  }
+  // no file access in this browser: hand out a copy
+  const info = FORMATS.find((f) => f.id === preferred)!;
+  const name = currentFile?.name ?? `${graph.meta.title || 'graph'}.${info.extensions[0]}`;
+  download(name, serializeCurrent(preferred), info.mime);
+  currentFile = { name, format: preferred, fromDisk: false, confirmed: true };
+  savedSnapshot = history.current;
+  message = `Downloaded ${name}. This browser cannot overwrite files; Chrome and Edge can.`;
+  refreshChrome();
+  return true;
+}
+
+async function newGraph(): Promise<void> {
+  if (!(await guardDirty())) return;
+  loadGraphData({ directed: false, nodes: [], edges: [] });
+}
+
+async function openFile(): Promise<void> {
+  if (canOverwrite && fsApi.showOpenFilePicker) {
+    try {
+      const [handle] = await fsApi.showOpenFilePicker({ multiple: false, mode: 'readwrite', types: pickerTypes() });
+      await importFile(await handle.getFile(), handle);
+    } catch (err) {
+      if (!isAbort(err)) {
+        warning = `Could not open: ${(err as Error).message}`;
+        refreshChrome();
+      }
+    }
+  } else $<HTMLInputElement>('file').click();
+}
+
 async function loadSample(file: string): Promise<void> {
+  if (!(await guardDirty())) return;
   try {
     const res = await fetch(`samples/${file}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -246,13 +426,20 @@ async function loadSample(file: string): Promise<void> {
   }
 }
 
-async function importFile(file: File): Promise<void> {
+async function importFile(file: File, handle?: FsFileHandle): Promise<void> {
+  if (!(await guardDirty())) return;
   try {
     const text = await file.text();
     const format = detectFormat(text, file.name);
     const directed = format === 'csv' ? confirm('This is an edge list. Treat edges as directed?') : false;
     const result = parseGraph(text, { filename: file.name, directed });
-    loadGraphData(result.graph, `Imported ${file.name} (${result.format})`);
+    loadGraphData(result.graph, `Opened ${file.name} (${result.format})`, {
+      name: file.name,
+      format: result.format as GraphFormat,
+      handle,
+      fromDisk: true,
+      confirmed: false,
+    });
     if (result.warnings.length) warning = `${result.warnings.length} import warning(s): ${result.warnings[0]}`;
     refreshChrome();
   } catch (err) {
@@ -261,22 +448,20 @@ async function importFile(file: File): Promise<void> {
   }
 }
 
-function save(): void {
-  const format = formatSel.value as GraphFormat;
-  const info = FORMATS.find((f) => f.id === format)!;
-  const data = graph.toData();
-  data.meta = { ...data.meta, dimension: view.getDimension() };
-  download(`${graph.meta.title || 'graph'}.${info.extensions[0]}`, serializeGraph(data, format), info.mime);
-  message = `Saved as ${info.label}`;
-  refreshChrome();
-}
-
-function generate(): void {
+async function generate(): Promise<void> {
+  if (!(await guardDirty())) return;
   const n = Number(prompt('Number of nodes (1 to 10000)', '200'));
   if (!Number.isFinite(n) || n < 1) return;
   const nodes = Math.min(10000, Math.floor(n));
   loadGraphData(generateClustered({ nodes, clusters: Math.max(2, Math.round(Math.sqrt(nodes) / 3)), avgDegree: 4, seed: Date.now() % 1e6 }), `Generated ${nodes} nodes`);
 }
+
+window.addEventListener('beforeunload', (e) => {
+  if (isDirty()) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
 
 $<HTMLInputElement>('file').addEventListener('change', (e) => {
   const input = e.target as HTMLInputElement;
@@ -291,7 +476,18 @@ stage.addEventListener('drop', (e) => {
   e.preventDefault();
   stage.classList.remove('drop');
   const f = e.dataTransfer?.files[0];
-  if (f) void importFile(f);
+  if (!f) return;
+  // Chrome and Edge hand out a file handle on drop; it must be requested during the event
+  const item = e.dataTransfer?.items?.[0] as unknown as { getAsFileSystemHandle?: () => Promise<FsFileHandle | null> } | undefined;
+  const pending = item?.getAsFileSystemHandle?.();
+  void (async () => {
+    let handle: FsFileHandle | undefined;
+    try {
+      const h2 = await pending;
+      if (h2 && typeof h2.createWritable === 'function') handle = h2;
+    } catch { /* no handle: opened read-only */ }
+    await importFile(f, handle);
+  })();
 });
 
 // ------------------------------------------------------------------ inspector
@@ -394,33 +590,73 @@ function renderEdges(ids: string[]): void {
 
 function renderGraphPanel(): void {
   const el = $('inspector');
-  const cfgBox = h('textarea', { class: 'ed-code', spellcheck: false, value: JSON.stringify(view.getUserConfig(), null, 2) });
-  const cfgMsg = h('p', { class: 'ed-hint' });
   el.replaceChildren(
     h('h2', { class: 'ed-title', textContent: 'Graph' }),
     text('Title', graph.meta.title, (v) => { graph.meta.title = v; commit(); }, 'untitled'),
     check('Directed', graph.directed, (v) => { graph.setDirected(v); commit(); }),
     h('p', { class: 'ed-hint', textContent: 'Directed is the default for all edges; individual edges can override it.' }),
     select('3D rotation', view.getConfig().camera.rotation, [['orbit', 'Orbit (horizon stays level)'], ['free', 'Free (trackball)']], (v) => view.setConfig({ camera: { rotation: v as 'orbit' | 'free' } })),
+    select('Force weights', view.getConfig().layout.weightMode, [['ignore', 'Ignore weights'], ['closer', 'Heavier = shorter'], ['longer', 'Heavier = longer']], (v) => view.setConfig({ layout: { weightMode: v as 'ignore' | 'closer' | 'longer' } })),
+    h('p', { class: 'ed-hint', textContent: 'Edge weights as lengths in the force layout: similarity (heavier = shorter) or distance (heavier = longer). Applies the next time the force layout runs.' }),
     check('Weights', view.getConfig().weight.show !== 'never', (v) => { view.setConfig({ weight: { show: v ? 'auto' : 'never' } }); }),
     check('Width by weight', view.getConfig().edge.widthByWeight.enabled, (v) => { view.setConfig({ edge: { widthByWeight: { enabled: v } } }); }),
-    h('h3', { class: 'ed-section', textContent: 'Skin (configuration JSON)' }),
-    cfgBox,
+    h('h3', { class: 'ed-section', textContent: 'Skin and configuration' }),
+    h('p', { class: 'ed-hint', textContent: 'Every option with an explanation, as JSON with comments. Edit and apply it, or save it as the skin file of your website.' }),
     h('div', { class: 'ed-actions' },
-      h('button', { textContent: 'Apply', onclick: () => {
-        try {
-          view.setConfig(JSON.parse(cfgBox.value) as DeepPartial<GraphscapeConfig>);
-          cfgMsg.textContent = 'Applied.';
-          themeSel.value = view.getConfig().theme;
-          refreshChrome();
-        } catch (err) { cfgMsg.textContent = `Invalid JSON: ${(err as Error).message}`; }
-      } }),
-      h('button', { textContent: 'Download', onclick: () => download('graphscape.config.json', JSON.stringify(view.getUserConfig(), null, 2), 'application/json') }),
+      h('button', { textContent: 'Edit configuration\u2026', onclick: openConfigDialog }),
       h('button', { textContent: 'Load file\u2026', onclick: () => $<HTMLInputElement>('cfgfile').click() }),
     ),
-    cfgMsg,
-    h('p', { class: 'ed-hint', textContent: 'Select a node or edge to edit it. See the README for every option.' }),
+    h('p', { class: 'ed-hint', textContent: 'Select a node or edge to edit it. The README lists every option as well.' }),
   );
+}
+
+// ------------------------------------------------------------------ configuration dialog (JSON with comments)
+
+const cfgText = h('textarea', { class: 'ed-code ed-code-big', spellcheck: false, wrap: 'off', 'aria-label': 'Configuration' });
+const cfgMsg = h('p', { class: 'ed-hint' });
+const cfgAll = h('input', { type: 'checkbox', checked: true, onchange: () => { applyConfigText(cfgText.value, true); fillConfig(); } });
+const cfgDialog = h('dialog', { class: 'ed-dialog', 'aria-label': 'Configuration' },
+  h('div', { class: 'ed-dialog-body' },
+    h('h2', { class: 'ed-title', textContent: 'Configuration' }),
+    h('p', { class: 'ed-muted', textContent: 'JSON with comments: // and /* */ are allowed, so is a trailing comma. Only values that differ from the defaults and the theme are kept when you apply or save.' }),
+    h('label', { class: 'ed-row' }, cfgAll, 'Show all options with explanations (otherwise only what you changed)'),
+    cfgText,
+    cfgMsg,
+    h('div', { class: 'ed-actions' },
+      h('button', { textContent: 'Apply', onclick: () => { cfgMsg.textContent = applyConfigText(cfgText.value); } }),
+      h('button', { textContent: 'Reset to theme', title: 'Remove all your changes except the theme', onclick: () => { view.setUserConfig({ theme: view.getConfig().theme }); fillConfig(); cfgMsg.textContent = 'Reset.'; refreshChrome(); } }),
+      h('button', { textContent: 'Download .json', onclick: () => download('graphscape.config.json', JSON.stringify(view.getUserConfig(), null, 2) + '\n', 'application/json') }),
+      h('button', { textContent: 'Download .jsonc', title: 'With comments; data-config of the script-tag bundle reads it', onclick: () => download('graphscape.config.jsonc', configToJsonc(view.getUserConfig()), 'application/json') }),
+      h('button', { textContent: 'Load file\u2026', onclick: () => $<HTMLInputElement>('cfgfile').click() }),
+      h('button', { textContent: 'Close', onclick: () => cfgDialog.close() }),
+    ),
+  ),
+);
+document.body.append(cfgDialog);
+
+function fillConfig(): void {
+  cfgText.value = configToJsonc(cfgAll.checked ? view.getConfig() : view.getUserConfig());
+}
+
+/** Parses JSON with comments and applies it as the complete user configuration. Returns a message for the user. */
+function applyConfigText(source: string, quiet = false): string {
+  try {
+    const parsed = parseJsonc(source) as DeepPartial<GraphscapeConfig>;
+    const unknown = findUnknownKeys(parsed);
+    const base = createConfig({ theme: parsed.theme });
+    view.setUserConfig(diffConfig(base, parsed) as DeepPartial<GraphscapeConfig>);
+    themeSel.value = view.getConfig().theme;
+    refreshChrome();
+    return unknown.length ? `Applied. Not an option, ignored: ${unknown.join(', ')}` : quiet ? '' : 'Applied.';
+  } catch (err) {
+    return `Not applied: ${(err as Error).message}`;
+  }
+}
+
+function openConfigDialog(): void {
+  fillConfig();
+  cfgMsg.textContent = '';
+  if (!cfgDialog.open) cfgDialog.showModal();
 }
 
 function renderInspector(): void {
@@ -436,13 +672,13 @@ $<HTMLInputElement>('cfgfile').addEventListener('change', async (e) => {
   const f = input.files?.[0];
   input.value = '';
   if (!f) return;
-  try {
-    view.setConfig(JSON.parse(await f.text()) as DeepPartial<GraphscapeConfig>);
-    themeSel.value = view.getConfig().theme;
+  const msg = applyConfigText(await f.text());
+  if (cfgDialog.open) {
+    fillConfig();
+    cfgMsg.textContent = msg;
+  } else {
+    warning = msg.startsWith('Not applied') ? msg : '';
     renderInspector();
-  } catch (err) {
-    warning = `Config not applied: ${(err as Error).message}`;
-    refreshChrome();
   }
 });
 
@@ -464,12 +700,14 @@ graph.events.on('change', () => { message = ''; refreshChrome(); });
 
 window.addEventListener('keydown', (e) => {
   const t = e.target as HTMLElement;
-  if (t.matches('input, textarea, select')) return;
   const mod = e.ctrlKey || e.metaKey;
   const key = e.key.toLowerCase();
+  if (mod && !e.altKey && key === 's') { e.preventDefault(); void (e.shiftKey ? saveFileAs() : saveFile()); return; }
+  if (mod && !e.altKey && key === 'o') { e.preventDefault(); void openFile(); return; }
+  if (mod && !e.altKey && key === 'f') { e.preventDefault(); view.focusSearch(); return; }
+  if (t.matches('input, textarea, select')) return;
   if (mod && key === 'z') { e.preventDefault(); restore(e.shiftKey ? history.redo() : history.undo()); }
   else if (mod && key === 'y') { e.preventDefault(); restore(history.redo()); }
-  else if (mod && key === 's') { e.preventDefault(); save(); }
   else if (mod && key === 'a') { e.preventDefault(); view.selectAll(); }
   else if (!mod && (key === 'delete' || key === 'backspace')) { e.preventDefault(); deleteSelection(); }
   else if (!mod && key === 'v') setTool('select');

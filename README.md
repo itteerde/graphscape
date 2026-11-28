@@ -93,7 +93,7 @@ The container needs a **size** (an explicit height). `three` must be installed n
 | Attribute | Meaning |
 | --- | --- |
 | `data-src` | graph file (JSON, GraphML, GML, DOT, CSV), path relative to the page |
-| `data-config` | JSON file with a partial configuration (a "skin") |
+| `data-config` | JSON file with a partial configuration (a "skin"); comments and trailing commas are allowed |
 | `data-theme` | `light`, `dark`, `blueprint` or a registered theme |
 | `data-dimension` | `2d` or `3d` |
 | `data-directed` | `true`: treat CSV edges as directed |
@@ -178,7 +178,7 @@ interface EdgeData {
 interface GraphData { directed: boolean; nodes: NodeData[]; edges: EdgeData[]; meta?: { title?, description?, dimension?: '2d' | '3d' } }
 ```
 
-* **Weights**: technically every edge has a weight. A missing weight means 1, and weight 1 is never displayed in `weight.show: "auto"`. Weights can drive line width (`edge.widthByWeight`) and layout attraction (`layout.weightMode: "strength"`).
+* **Weights**: technically every edge has a weight. A missing weight means 1, and weight 1 is never displayed in `weight.show: "auto"`. Weights can drive line width (`edge.widthByWeight`) and the edge lengths of the force layout (`layout.weightMode`, see [Layouts](#layouts)).
 * **Direction**: `GraphData.directed` is the default; any edge can override it, so directed and undirected edges may be mixed.
 * **Multi edges and self loops** are allowed. Parallel edges are drawn as symmetric curves, self loops as circles beside the node.
 * **Coordinates** are optional. Nodes without them get a start position and the configured layout runs when a graph is loaded (`layout.autoRun`).
@@ -247,11 +247,16 @@ Every node and edge may carry a `url`. Relative paths are the default. `javascri
 
 | Option | Values | Meaning |
 | --- | --- | --- |
-| `interaction.openLinks` | `click`, `dblclick` (default), `ctrl-click`, `never` | which gesture opens the link |
+| `interaction.openLinks` | `ctrl-click` (default), `click`, `dblclick`, `never` | which gesture opens the link; `ctrl-click` keeps plain clicks free for selecting, `never` switches links (and their hints) off |
 | `links.baseUrl` | string | prefix for relative paths, e.g. `content/` |
 | `links.target` | `self`, `blank`, `panel`, `event` | navigate, new tab, sandboxed iframe panel inside the view, or let your code decide |
 | `links.allowAbsolute` | boolean | allow absolute links |
 | `links.panelSandbox` | string | iframe `sandbox` attribute of the panel |
+| `links.badge` / `badgeColor` / `badgeSize` | `true` / `#1c7ed6` / `5` | small link badge on every node and edge that has a usable URL |
+| `links.hint` | `true` | the tooltip of a linked item says how to open it, e.g. "Ctrl+click to open the page" ("Cmd+click" on Mac) |
+| `links.chip` / `chipLabel` | `true` / `Open page` | an **Open page** chip next to a single selected node or edge with a URL |
+
+**Discoverability.** Visitors should not have to guess that a node is a link or that Ctrl is needed, and touch screens have no Ctrl key. So linked items carry a small **link badge** (top right of a node, beside the middle of an edge), their **tooltip** names the gesture, and selecting a single linked node or edge shows an **Open page** chip next to it that opens the page with one tap or click, no modifier needed. Plain clicks stay free for selecting, so multi-selections can still be edited. All three aids can be switched off individually (`links.badge`, `links.hint`, `links.chip`).
 
 With `target: "event"`, or `event.handled = true` in a `link` listener, you decide what happens, for example loading the content into an element of your page:
 
@@ -279,7 +284,10 @@ Start it with `npm run dev` or open `dist/editor/index.html` through `npm run se
 | Fit view | **F** |
 | Select tool, clear selection | **V**, **Esc** |
 | Open a linked page | **Ctrl**-click a node or edge with a URL, or the *Open link* button |
-| Save | **Ctrl+S** (format chosen in the toolbar) |
+| Open | **Ctrl+O** or *Open...* (also drag and drop a file onto the canvas) |
+| Save | **Ctrl+S**: writes to the file that was opened or saved before (Chrome, Edge, Opera); a new graph asks for a name first |
+| Save as | **Ctrl+Shift+S**: system dialog for folder, name and format; the system asks before replacing an existing file |
+| Search | **Ctrl+F** jumps into the search box; type to select matches (`group:Sales` selects a whole group) |
 
 Keys are ignored while a text field has focus.
 
@@ -299,11 +307,25 @@ Rotate and scale need **two or more** selected nodes, because a single node has 
 
 * **Node**: label (multi-line, Enter inserts a break), subline, group, URL, color, shape, size, pinned, card body (for `card` shapes). With several nodes selected the common values are shown and edits apply to all.
 * **Edge**: weight, label, URL, color, direction (graph default, directed, undirected), dashed, width, *Reverse*.
-* **Graph** (nothing selected): title, default direction, 3D rotation scheme, weight display, width by weight, and the **configuration JSON** with *Apply*, *Download* and *Load file...* so a skin can be developed live and then saved.
+* **Graph** (nothing selected): title, default direction, 3D rotation scheme, weight display, width by weight, and **Edit configuration...**, which opens the configuration dialog (below).
+
+### Configuration dialog
+
+*Edit configuration...* shows the configuration as **JSON with comments**: every option has an explanation above it, so the file documents itself. `//` and `/* */` comments and trailing commas are allowed. Choose *Show all options with explanations* (default) or only what you changed. *Apply* takes the text as the complete configuration and keeps only the values that differ from the defaults and the theme, and it names keys that are not options (typos) instead of silently ignoring them. *Reset to theme* drops all your changes, *Download .json* saves the minimal configuration as plain JSON, *Download .jsonc* saves it with comments, *Load file...* reads either. Use the downloaded file as `data-config` of the script-tag bundle (comments are fine there too) or pass it to `new GraphView(el, config)` after `parseJsonc`.
 
 ### Files, export, themes
 
-Toolbar: *New*, *Open...* (or drag and drop onto the canvas), *Samples*, *Generate...* (random clustered graph), format selector with *Save*, *PNG*, undo/redo, layout selector with *Run layout* and *Stop*, 2D/3D switch, *Fit*, theme selector. The editor chrome follows the theme through the same CSS variables the viewer uses. Undo/redo are JSON snapshots (100 steps).
+The editor itself runs with `ui.fullscreen: false` because full screen would hide its toolbar and inspector.
+
+**Saving works like in desktop programs.**
+
+* *Save* (Ctrl+S) writes to the file that was opened or saved before, without downloading a new copy. If nothing changed it does nothing. The file name in the toolbar and the window title show a dot while there are unsaved changes.
+* The **first** *Save* over a file that you *opened* asks once whether to overwrite it, because Graphscape writes its own version of formats such as yEd GraphML (bend points, ports, nested groups and custom graphics are lost; the dialog says what applies). After that, *Save* overwrites silently for the rest of the session. *Save as* offers an alternative right in that dialog.
+* *Save as...* (Ctrl+Shift+S) uses the system dialog, which itself asks before replacing an existing file. A file created with *Save as* is overwritten by *Save* without further questions.
+* Before *New*, *Open*, a sample, *Generate* or a dropped file replaces a graph with unsaved changes, and before closing the tab, you are asked whether to save.
+* **Browser support**: overwriting needs the File System Access API (Chrome, Edge, Opera, on https or localhost). In Firefox and Safari *Save* and *Save as* download a copy instead, and the status line says so.
+
+Toolbar: *New*, *Open...*, *Samples*, *Generate...* (random clustered graph), *Save*, *Save as...*, file format (used for new files and downloads), *PNG*, undo/redo, layout selector with *Run layout* and *Stop*, 2D/3D switch, *Fit*, theme selector. The editor chrome follows the theme through the same CSS variables the viewer uses. Undo/redo are JSON snapshots (100 steps).
 
 ---
 
@@ -316,12 +338,15 @@ Toolbar: *New*, *Open...* (or drag and drop onto the canvas), *Samples*, *Genera
 | Wheel | zoom to cursor | zoom (orbit: to cursor; trackball: to the center) |
 | Middle drag | zoom | zoom |
 | Touch | 1 finger pan, 2 fingers zoom/pan | 1 finger rotate, 2 fingers zoom/pan |
-| Click node/edge | select (Shift adds) | same |
+| Click node/edge | select (Shift adds); a single selected linked item shows the **Open page** chip | same |
+| Ctrl-click (Cmd on Mac) node/edge with a URL | opens the link (default `interaction.openLinks`) | same |
 | Drag node | move | move in the plane facing the camera |
 | Shift-drag background | box select | box select |
 | Hover | tooltip with label, sublabel, group, URL, weight | same |
+| Search box (top left) | type to find and select nodes and groups; **Enter** zooms to the matches; **Esc** clears | same |
+| `?` button or `?` key over the view | list of the controls that are available in this view | same |
 
-Buttons in the corner: zoom in/out, *Fit*, 2D/3D, and *Full* if `ui.fullscreen` is on. Everything can be switched off for read-only embeds (see [recipes](#recipes)).
+Buttons in the corner: zoom in/out, *Fit*, 2D/3D, and the full screen icon (`ui.fullscreen`, on by default). Everything can be switched off for read-only embeds (see [recipes](#recipes)).
 
 ---
 
@@ -338,7 +363,17 @@ Buttons in the corner: zoom in/out, *Fit*, 2D/3D, and *Full* if `ui.fullscreen` 
 
 `tree`, `layered`, `circle`, `grid` and `sphere` size every node as **body + label + sublabel** (or the whole card) and keep `layout.gap` world units free between boxes, so labels do not collide. `layout.spacing` is only the fallback when box sizes are unknown. `nodeBoxes(graph, config)` exposes the footprints for your own layouts.
 
-Layout options: `idealLength` (spring length of `force`), `gap`, `spacing`, `weightMode` (`ignore` or `strength`), `gravity`, `direction`, `seed`. A running force layout can be stopped with `view.stopLayout()`; dragging a node during the simulation pins it while you hold it.
+**Edge weights as lengths** (`layout.weightMode`, force layout only). A weight can mean two opposite things, so there are two modes:
+
+| Mode | Meaning | Typical data |
+| --- | --- | --- |
+| `ignore` (default) | weights do not influence the layout | |
+| `closer` | heavier edge = shorter edge | similarity, strength of a tie, number of interactions |
+| `longer` | heavier edge = longer edge | distance, cost, duration, time between events |
+
+Lengths are relative to the **median weight**, so the drawing keeps the size given by `idealLength`, and one edge can be at most 4 times longer or shorter than that. In the editor: *Graph* panel, *Force weights*, then run the force layout again. Repulsion between other nodes still acts, so lengths are proportional in tendency, not exact (an exact fit needs a stress layout, which is a different algorithm).
+
+Layout options: `idealLength` (spring length of `force`), `gap`, `spacing`, `weightMode` (`ignore`, `closer` or `longer`), `gravity`, `direction`, `seed`. A running force layout can be stopped with `view.stopLayout()`; dragging a node during the simulation pins it while you hold it.
 
 ---
 
@@ -367,7 +402,7 @@ view.setConfig({ label: { show: false } });     // patch at runtime
 view.getUserConfig();                           // what you would save as a config file
 ```
 
-The same object can be a JSON file (`data-config="skin.json"`, or load and pass it). Function matchers in `rules` need JavaScript. Built-in themes: `light` (default), `dark`, `blueprint`. `examples/skin.json` is a complete skin example.
+The same object can be a JSON file (`data-config="skin.json"`, or load and pass it). The file may contain comments and trailing commas (`parseJsonc`); the editor's configuration dialog writes one with an explanation for every option. Function matchers in `rules` need JavaScript. Built-in themes: `light` (default), `dark`, `blueprint`. `examples/skin.json` is a complete skin example.
 
 ### General
 
@@ -451,9 +486,21 @@ Matchers: `id`, `group`, `tag`, `prop: [key, value]` (all given keys must match)
 | `layout.idealLength` | `60` | spring length of the force layout |
 | `layout.spacing` | `40` | minimum distance when node boxes are unknown |
 | `layout.gap` | `14` | free space between node boxes in the placement layouts |
-| `layout.weightMode` | `ignore` | `strength`: heavier edges pull stronger |
+| `layout.weightMode` | `ignore` | `closer` (heavier = shorter) or `longer` (heavier = longer), see [Layouts](#layouts) |
 | `layout.gravity` / `direction` / `seed` | `0.05` / `TB` / `1` | `direction` is `TB` or `LR` for `tree` and `layered` |
 | `layout.autoRun` | `true` | run the layout when loaded nodes have no coordinates |
+
+### Search and help
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `ui.search` | `true` | search box in the top left corner |
+| `ui.help` | `true` | `?` button that lists the controls of this view |
+| `search.minChars` | `2` | terms shorter than this are ignored |
+| `search.fields` | `label sublabel id group tags props` | fields searched by plain terms |
+| `search.fitOnEnter` | `true` | Enter zooms to the matches |
+
+**Search syntax**: terms are case-insensitive substrings and all terms must match. `field:term` searches one field: `group:Sales`, `tag:team`, `id:n12`, `label:"New York"`, `url:pages/`, `prop:2019`; quotes keep spaces together (`group:"Design Team"`). Typing selects the matching nodes live, so searching for a group name selects the whole group, and the selection can then be moved, colored or edited together. Each keystroke is a plain substring scan over text prepared once per graph, which is far below a frame for 10,000 nodes (the test suite checks it).
 
 ### Interaction and links
 
@@ -462,22 +509,25 @@ Matchers: `id`, `group`, `tag`, `prop: [key, value]` (all given keys must match)
 | `interaction.dragNodes` / `select` / `multiSelect` / `hover` / `tooltip` | all `true` | switch features off for a read-only embed |
 | `interaction.gizmo` | `false` | transform gizmo for selected nodes (the editor turns it on) |
 | `interaction.axisLock` | `true` | X/Y/Z keys lock dragging to an axis |
-| `interaction.openLinks` | `dblclick` | `click`, `dblclick`, `ctrl-click`, `never` |
+| `interaction.openLinks` | `ctrl-click` | `ctrl-click`, `click`, `dblclick`, `never` |
 | `interaction.pickLimit` | `20000` | edge hit testing is skipped above this edge count |
-| `links.*` | | see [Website links](#linking-to-website-content) |
+| `links.*` | | targets, base URL, badge, hint, chip: see [Website links](#linking-to-website-content) |
 
 ### DOM parts: tooltip, buttons, panel, full screen
 
 | Key | Meaning |
 | --- | --- |
 | `ui.controls` | zoom, fit and 2D/3D buttons (default `true`) |
-| `ui.fullscreen` | adds a Full / Exit button (default `false`); `view.toggleFullscreen()` does the same from code |
+| `ui.search` / `ui.help` | search box and help button, see [Search and help](#search-and-help) |
+| `ui.fullscreen` | full screen / back icon button in the corner (default `true`, the familiar four-corners icon); set `false` to remove it. `view.toggleFullscreen()` does the same from code |
 | `ui.injectStyles` | inject the default CSS once; set `false` to ship your own (`defaultCss` exports the text) |
 | `ui.cssVars` | map of CSS custom properties set on the view as `--gs-<name>`: `font`, `panel-bg`, `panel-fg`, `panel-border`, `accent`, `radius` |
 
 The DOM parts use the classes `gs-root gs-tooltip gs-controls gs-btn gs-panel gs-box gs-error` and, while in the CSS fallback for full screen, `gs-pseudo-fullscreen`, so a site stylesheet can restyle them directly.
 
 ### Full screen
+
+The icon button is on by default (`ui.fullscreen: true`). Remove it with `ui: { fullscreen: false }` and drive full screen from your own button via `view.toggleFullscreen()` if you prefer.
 
 `view.toggleFullscreen()` switches the container in or out of full screen with the Fullscreen API and falls back to a fixed, viewport-filling container where it is unavailable (for example iPhone Safari). It must be called from a user gesture. **Esc** leaves both variants; event `fullscreenchange` reports the state.
 
@@ -500,13 +550,17 @@ const view = new GraphView(container, config?, graph?);
 view.load(graphOrData); view.refresh(); view.destroy();
 view.graph;                                       // the Graph model
 
-view.setConfig(patch); view.getConfig(); view.getUserConfig();
+view.setConfig(patch);                            // merge into the user config
+view.setUserConfig(config);                       // replace the user config completely
+view.getConfig(); view.getUserConfig();
 view.setDimension('3d'); view.getDimension(); view.isFlat();
 
 view.runLayout('force' | 'tree' | 'layered' | ..., options?): Promise<void>;
 view.stopLayout(); view.isLayoutRunning;
 
-view.fit(); view.zoomBy(1.4); view.resize();
+view.fit(ids?); view.zoomBy(1.4); view.resize();      // fit(ids) frames only those nodes
+view.search('group:Sales', { select?, fit? }): SearchResult; view.clearSearch(); view.focusSearch();
+view.toggleHelp();
 view.toggleFullscreen(force?): Promise<void>; view.isFullscreen;
 
 view.getSelection(); view.setSelection({ nodes, edges }); view.selectAll(); view.clearSelection();
@@ -521,6 +575,8 @@ const off = view.on(name, handler);               // returns an unsubscribe func
 ```
 
 ### Events
+
+(`search` is new: `{ query, ids, tooShort }`, fired by the search box and by `view.search()`.)
 
 | Event | Payload |
 | --- | --- |
@@ -539,7 +595,7 @@ const off = view.on(name, handler);               // returns an unsubscribe func
 
 ### Pure functions (also in Node)
 
-`parseGraph`, `serializeGraph`, `detectFormat`, `FORMATS`, `computeLayout`, `LAYOUT_NAMES`, `nodeBoxes`, `placeNewNodes`, `generateClustered`, `generateMixedNetwork`, `resolveUrl`, `createConfig`, `mergeConfig`, `defineConfig`, `registerTheme`, `themes`, `resolveNodeStyle`, `resolveEdgeStyle`, and the `geometry` namespace.
+`parseGraph`, `serializeGraph`, `detectFormat`, `NodeSearchIndex`, `searchNodes`, `parseQuery`, `helpLines`, `configToJsonc`, `parseJsonc`, `diffConfig`, `findUnknownKeys`, `CONFIG_DOCS` (one line of documentation per option), `FORMATS`, `computeLayout`, `LAYOUT_NAMES`, `nodeBoxes`, `placeNewNodes`, `generateClustered`, `generateMixedNetwork`, `resolveUrl`, `createConfig`, `mergeConfig`, `defineConfig`, `registerTheme`, `themes`, `resolveNodeStyle`, `resolveEdgeStyle`, and the `geometry` namespace.
 
 ```ts
 import { Graph, parseGraph, computeLayout } from 'graphscape';
@@ -570,13 +626,15 @@ g.setPositions(computeLayout(g, 'tree', { direction: 'LR' }));   // headless lay
 * Force repulsion uses a spatial hash with a cutoff above 400 nodes.
 * Raise `label.resolution` for crisper text (more texture memory), lower `render.pixelRatio` on weak GPUs, switch labels off for very large graphs.
 
+**Renderer.** The view uses three.js `WebGLRenderer` (WebGL 2). Its bottleneck is JavaScript (layout steps, rebuilding line buffers), not the GPU, because the scene is a few dozen instanced draw calls. The edges use `LineMaterial`, a `ShaderMaterial`, which three.js' `WebGPURenderer` does not support (it needs node materials), so a switch to WebGPU would be a port, not a flag. It would only pay off for GPU compute (for example a force layout on the GPU for tens of thousands of nodes) or for very heavy custom nodes and particle systems.
+
 **Extending.** New file formats go into `src/core/io` (a `parseX(text): ImportResult` and `serializeX(data): string`, registered in `io/index.ts`). New layouts are functions `(graph, options) => Map<id, [x, y, z]>` registered in `layout/index.ts` and `LayoutName`. New themes: `registerTheme(name, partialConfig)`.
 
 ---
 
 ## Testing and development
 
-* `npm test` runs the unit tests of the framework-free core: graph model, round trips through all formats, a yEd UML GraphML import, DOT parsing, malformed input, URL safety, edge geometry (clipping, parallel edges, loops), all layouts (including box-aware spacing and the tidy tree), the configuration merge and style resolution, and the 1200-node network generator.
+* `npm test` runs the unit tests of the framework-free core: graph model, round trips through all formats, a yEd UML GraphML import, DOT parsing, malformed input, URL safety, edge geometry (clipping, parallel edges, loops), all layouts (including box-aware spacing and the tidy tree), the configuration merge and style resolution, the link gesture texts, weights as edge lengths in the force layout, the node search (fields, prefixes, quotes, minimum length, 10,000 nodes), the help lines, the commented configuration (documentation coverage of every option, comment stripping, minimal diff, typo detection), and the 1200-node network generator.
 * The three.js view and the editor have **no automated tests**; they are covered by type checking and manual use. A short manual check after changes: load the samples, drag a node, box select, add and connect nodes, undo/redo, switch 2D/3D and both rotation schemes, use the gizmo in all three modes, run each layout, toggle full screen, open a link in each `links.target`.
 * Types: `npm run typecheck`. Keep `src/core` free of DOM and three.js imports so it stays testable in Node.
 * The editor only uses the public library API, so anything it does can be done from your own page.
@@ -593,7 +651,8 @@ g.setPositions(computeLayout(g, 'tree', { direction: 'LR' }));   // headless lay
 | Old behavior after an update | run `npm run clean && npm run build`, hard refresh the browser (cached `graphscape.standalone.js`) |
 | Labels missing | graph has more nodes than `label.maxCount`, or `label.show` is `false` |
 | Shapes look the same in 3D | 3D draws solids; very small nodes or heavy zoom-out make them look alike |
-| Links do nothing | URL rejected (absolute without `links.allowAbsolute`, or a blocked scheme), or `interaction.openLinks` is `never`; listen to `link` to see what arrives |
+| Save always downloads a new file | the browser has no File System Access API (Firefox, Safari) or the page is not on https/localhost; use Chrome or Edge |
+| Links do nothing | the default gesture is Ctrl-click (Cmd-click on Mac), or select the node and press the **Open page** chip; the URL may have been rejected (absolute without `links.allowAbsolute`, or a blocked scheme), or `interaction.openLinks` is `never`; listen to `link` to see what arrives |
 | Full screen does nothing | must be triggered by a click or key press; some embeds forbid it (iframe without `allowfullscreen`), the CSS fallback is used then |
 | Gizmo not visible | `interaction.gizmo` is off in your page, nothing is selected, or rotate/scale mode with a single node selected |
 
@@ -615,6 +674,8 @@ No other runtime dependencies: XML/GraphML, GML, DOT and CSV parsing, the layout
 
 * Interactive size: a few thousand nodes with animation, larger graphs for static viewing (see [Performance](#architecture-and-performance)).
 * Edges are hit-tested only up to `interaction.pickLimit` edges.
+* The search looks at nodes only (not edges) and is an exact substring search, not a fuzzy one.
+* Overwriting files needs Chrome, Edge or Opera; other browsers download copies.
 * In 3D, self loops lie in the XY plane and shapes are fixed solids (no per-node rotation yet).
 * yEd: groups are flattened, bend points, ports and tables are ignored, edges with arrows on both ends become undirected.
 * A single node cannot be rotated or scaled with the gizmo (it has no orientation or extent of its own).

@@ -12,5 +12,5 @@
   ],
   "links": { "target": "panel", "baseUrl": "" },
   "interaction": { "openLinks": "dblclick" },
-  "ui": { "cssVars": { "panel-bg": "rgba(42,30,22,0.96)", "panel-fg": "#f3e3c3", "panel-border": "#6b5238", "accent": "#e0b872", "radius": "2px" } }
+  "ui": { "fullscreen": true, "cssVars": { "panel-bg": "rgba(42,30,22,0.96)", "panel-fg": "#f3e3c3", "panel-border": "#6b5238", "accent": "#e0b872", "radius": "2px" } }
 }
